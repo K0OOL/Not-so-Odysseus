@@ -72,6 +72,19 @@ function _platformIcon(platform) {
   return '';
 }
 
+function _isNonEmpty(v) { return typeof v === 'string' && v.trim().length > 0; }
+
+function _ensureLocalServerDownloadDir() {
+  const advertised = (_envState.downloadDir || '').trim();
+  const cached = (() => { try { return localStorage.getItem('hwfit_download_dir_v1') || ''; } catch { return ''; } })();
+  const val = (advertised || cached).trim();
+  if (!val) return;
+  const local = (_envState.servers || []).find(s => !s.host || s.host === 'local' || s.isLocal);
+  if (local && !(_isNonEmpty(local.downloadDir))) {
+    local.downloadDir = val;   // e.g. E:\LLM-Models\huggingface\hub
+  }
+}
+
 export let _envState = { env: 'none', envPath: '', hfToken: '', hfTokenConfigured: false, hfTokenMasked: '', gpus: '', remoteHost: '', servers: [], modelPaths: [], platform: '', defaultServer: '' };
 let _lastCacheHostVal = null;
 let _cookbookOpeningSpinners = [];
@@ -162,8 +175,16 @@ function _getPort(hostOrTask) {
 /** Get platform for a given host (or task object). Returns 'windows', 'termux', 'linux', or '' */
 export function _getPlatform(hostOrTask) {
   const isWinBrowser = (window.navigator.userAgent || window.navigator.platform || '').toLowerCase().includes('win');
+  const _savedPlatform = (() => {
+    try { return localStorage.getItem('hwfit_platform_v1') || ''; }
+    catch { return ''; }
+  })();
   if (!hostOrTask || hostOrTask === 'local') {
-    return _envState.platform || (isWinBrowser ? 'windows' : '');
+    if (_hwfitCache?.system?.platform) {
+      return _hwfitCache.system.platform === 'win32' ? 'windows' : 'linux';
+    }
+    // Probe result wins; then last-known cached platform; browser UA is last resort.
+    return _envState.platform || _savedPlatform || (isWinBrowser ? 'windows' : '');
   }
   if (typeof hostOrTask === 'object') {
     const h = hostOrTask.remoteHost;
@@ -380,12 +401,17 @@ export function _buildServeCmd(f, modelName, backend) {
       if (_opts.envVars.length) cmd += _opts.envVars.join(' ') + ' ';
     }
     // Pinned attention backend (Attention field). Empty = let vLLM pick.
-    const _attn = (f.vllm_attn_backend ?? '').toString().trim();
+    const _attnRaw = (f.vllm_attn_backend ?? '').toString().trim();
+    const _extraEnv = (f.extra_env ?? '').toString().replace(/\s+/g, ' ').trim();
+    const _allowLegacyFlashAttn = /(?:^|\s)ODYSSEUS_ALLOW_LEGACY_FLASH_ATTN=1(?:\s|$)/.test(_extraEnv);
+    // vLLM 0.22 + flash-attn-4 lacks the legacy `flash_attn.ops.triton.rotary`
+    // module required by FLASH_ATTN. Let power users force it only after they
+    // install a compatible flash-attn 2.x stack and opt in explicitly.
+    const _attn = (_attnRaw === 'FLASH_ATTN' && !_allowLegacyFlashAttn) ? 'TORCH_SDPA' : _attnRaw;
     if (_attn) cmd += `VLLM_ATTENTION_BACKEND=${_attn} `;
     // Free-text "Env" field — verbatim KEY=VAL pairs (space-separated).
     // Collapse any pasted newlines/tabs so the backend allowlist (which
     // rejects \n / \r) doesn't trip on a multi-line paste from a model card.
-    const _extraEnv = (f.extra_env ?? '').toString().replace(/\s+/g, ' ').trim();
     if (_extraEnv) cmd += _extraEnv + ' ';
     cmd += `${_vllmBin} serve ${modelName} --host 0.0.0.0 --port ${f.port || '8000'}`;
     cmd += ` --tensor-parallel-size ${f.tp || '1'}`;
@@ -430,6 +456,8 @@ export function _buildServeCmd(f, modelName, backend) {
     const ggufPath = f._gguf_path || 'model.gguf';
     const gpuId = f.gpu_id?.trim() || '';
     const py = _isWindows() ? 'python' : 'python3';
+    const repoSlug = String(modelName || '').replace(/\//g, '--');
+    const linuxGgufResolver = `$(find "$HOME/.cache/huggingface" -path "*/models--${repoSlug}/snapshots/*" -type f \\( -name '*.gguf' -o -name '*-00001-of-*.gguf' \\) 2>/dev/null | sort | head -1)`;
     // CPU-only serve (-ngl 0): drop the GPU-only flags, otherwise the command
     // mixes "zero GPU layers" with CUDA unified-memory + flash-attn and fails to
     // start (issue #1291). Only affects the ngl=0 path; GPU serving is unchanged.
@@ -444,8 +472,9 @@ export function _buildServeCmd(f, modelName, backend) {
     if (gpuId && _isWindows()) cmd += `$env:CUDA_VISIBLE_DEVICES="${gpuId}"; `;
     if (!_isWindows()) {
       // Resolve GGUF path once, fail loudly if nothing matched (prevents
-      // `--model ""` which causes confusing downstream errors).
-      cmd += `MODEL_FILE=${ggufPath} && { [ -n "$MODEL_FILE" ] && [ -f "$MODEL_FILE" ]; } || { echo "ERROR: No GGUF found on this host. Either download the model here, or switch to the server where it's cached."; exit 1; } && `;
+      // `--model ""` or stale placeholder `model.gguf` crashes).
+      const _linuxModelExpr = (f._gguf_path && f._gguf_path !== 'model.gguf') ? ggufPath : linuxGgufResolver;
+      cmd += `MODEL_FILE=${_linuxModelExpr} && { [ -n "$MODEL_FILE" ] && [ -f "$MODEL_FILE" ]; } || { echo "ERROR: No GGUF found for ${modelName} under $HOME/.cache/huggingface. Download a GGUF quant repo/file, or use vLLM/SGLang for safetensors models."; exit 1; } && `;
     }
     const modelArg = _isWindows() ? `"${ggufPath}"` : `"$MODEL_FILE"`;
     // Prefer the native llama-server binary on Linux — its minja templating
@@ -478,8 +507,9 @@ export function _buildServeCmd(f, modelName, backend) {
     }
     if (_kv) {
       _lcExtra += ` --cache-type-k ${_kv} --cache-type-v ${_kv}`;
-      // llama-cpp-python exposes these as type_k/type_v; pass through best-effort.
-      _lcpExtra += ` --type_k ${_kv} --type_v ${_kv}`;
+      // llama-cpp-python does not accept llama.cpp's cache-type flag names here.
+      // Leave Python-wrapper cache selection to its own defaults instead of
+      // passing an invalid enum/string combination that aborts startup.
     }
     const _llamaFit = String(f.llama_fit || '').trim();
     if (['on', 'off'].includes(_llamaFit)) _lcExtra += ` --fit ${_llamaFit}`;
@@ -667,7 +697,8 @@ async function _fetchDependencies() {
     const _depRow = (pkg) => {
       const isLocal = pkg.target === 'local';
       const isSystemDep = pkg.kind === 'system';
-      const winBlocked = !isLocal && _isWindows() && _winUnsupported.has(pkg.name);
+      const isActuallyWindows = _depHost ? _isWindows(_depHost) : (data.platform === 'win32');
+      const winBlocked = !isLocal && isActuallyWindows && _winUnsupported.has(pkg.name);
       const note = pkg.status_note ? `<div class="memory-item-meta" style="font-size:10px;opacity:0.65;margin-top:3px;">${esc(pkg.status_note)}</div>` : '';
       const updateNote = pkg.installed && pkg.pip_update_available === false && pkg.update_note ? `<div class="memory-item-meta" style="font-size:10px;opacity:0.55;margin-top:3px;">${esc(pkg.update_note)}</div>` : '';
       // Inline rebuild/reinstall tag. Styled as a .cookbook-dep-tag so it
@@ -1297,8 +1328,39 @@ function _wireTabEvents(body) {
         }
       }
       const shortName = repo.split('/').pop();
-      _retryDownload(shortName, payload);
-      dlInput.value = '';
+      const startDownload = (finalPayload) => {
+        _retryDownload(shortName, finalPayload);
+        dlInput.value = '';
+      };
+      payload.smart = true;
+      if (autoInclude) {
+        payload.include = autoInclude;
+        startDownload(payload);
+        return;
+      }
+      fetch(`/api/cookbook/hf-model-fit?repo=${encodeURIComponent(repo)}&backend=llamacpp`, { credentials: 'same-origin' })
+        .then(r => r.ok ? r.json() : Promise.reject(new Error(`HF probe HTTP ${r.status}`)))
+        .then(fit => {
+          const rec = fit.recommended || null;
+          if (rec?.include) payload.include = rec.include;
+          if (fit.risk === 'blocked' && !payload.include) {
+            uiModule.showToast(`Blocked: ${fit.final_size_human || 'large repo'} — ${(fit.reasons || ['too large']).join('; ')}`, 12000);
+            return;
+          }
+          if (fit.risk === 'warn') {
+            const msg = `${repo}\n\nSize: ${fit.final_size_human}\nRecommended: ${rec?.name || 'whole repo'}\n\n${(fit.reasons || []).join('\n')}\n\nDownload anyway?`;
+            if (!confirm(msg)) return;
+            if (!payload.include) payload.override = true;
+          }
+          if (payload.include) uiModule.showToast(`Smart download: ${payload.include}`);
+          startDownload(payload);
+        })
+        .catch(err => {
+          if (confirm(`Could not inspect ${repo}: ${err.message}\n\nDownload whole repo anyway?`)) {
+            payload.override = true;
+            startDownload(payload);
+          }
+        });
     };
     dlBtn.addEventListener('click', triggerDownload);
     dlInput.addEventListener('keydown', (e) => {
@@ -1726,7 +1788,8 @@ function _renderRecipes() {
   html += '<output id="hwfit-context-label">50k</output></label>';
   // Search lives at the far right of the toolbar so the controls (Type/Quant/
   // Engine/Context) read as a row of compact filters followed by free-text.
-  html += '<input type="text" class="cookbook-field-input hwfit-search" id="hwfit-search" placeholder="Search models..." style="flex:1;" />';
+  html += '<input type="text" class="cookbook-field-input hwfit-search" id="hwfit-search" placeholder="Search curated models, or paste HF URL / repo (e.g. org/model-name)..." style="flex:1;" />';
+  html += '<button type="button" class="hwfit-gpu-btn" id="hwfit-live-btn" title="Search Hugging Face live and compare results against this PC" style="flex-shrink:0;display:none;">HF LIVE</button>';
   html += '</div>';
   html += '<div class="hwfit-toolbar" style="margin-top:7px;">';
   html += '<select class="cookbook-field-input hwfit-server-select" id="hwfit-server-select" style="height:28px;min-width:88px;position:relative;top:0px;">';

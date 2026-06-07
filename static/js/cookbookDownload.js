@@ -493,7 +493,7 @@ export async function _runModelDownload(panel, model, backend, hostOverride) {
   const platform = host ? (srv.platform || '') : (_envState.platform || '');
   const isWin = host ? (platform === 'windows') : _isWindows();
 
-  const payload = { repo_id: repo };
+  const payload = { repo_id: repo, smart: true };
   if (include) payload.include = include;
   // Large downloads are where hf_transfer most often dies near the end. Use the
   // plain HuggingFace downloader up front for big model files; it is slower, but

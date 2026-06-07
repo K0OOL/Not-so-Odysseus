@@ -12,7 +12,7 @@ import sys
 import uuid
 from pathlib import Path
 
-from fastapi import APIRouter, HTTPException, Request, Depends
+from fastapi import APIRouter, HTTPException, Request, Depends, Query
 
 from src.auth_helpers import require_user
 from pydantic import BaseModel
@@ -31,6 +31,13 @@ from core.platform_compat import (
 from routes.shell_routes import TMUX_LOG_DIR
 
 logger = logging.getLogger(__name__)
+ODYSSEUS_DOWNLOAD_DIR = os.environ.get("ODYSSEUS_DOWNLOAD_DIR", "").strip()
+HF_HOME = os.environ.get("HF_HOME", "").strip()
+
+def _container_hub_dir():
+    if HF_HOME:
+        return os.path.join(HF_HOME, "hub")
+    return os.path.expanduser("~/.cache/huggingface/hub")
 
 from routes.cookbook_helpers import (
     _SSH_PORT_RE, _REMOTE_HOST_RE, _SESSION_ID_RE,
@@ -92,6 +99,10 @@ def setup_cookbook_routes() -> APIRouter:
             env.pop("hfToken", None)
             env["hfTokenConfigured"] = bool(token)
             env["hfTokenMasked"] = _mask_secret(token)
+        # Expose download dirs and container paths for path translation
+        state["download_dir"] = ODYSSEUS_DOWNLOAD_DIR
+        state["hf_home"] = HF_HOME
+        state["container_hub_dir"] = _container_hub_dir()
         return state
 
     def _state_for_storage(state, on_disk=None):
@@ -271,6 +282,116 @@ def setup_cookbook_routes() -> APIRouter:
         pid_path.write_text(str(proc.pid), encoding="utf-8")
         return {"pid": proc.pid, "log_path": str(log_path)}
 
+    def _human_bytes(n: int) -> str:
+        value = float(n or 0)
+        for unit in ("B", "KB", "MB", "GB", "TB"):
+            if value < 1024 or unit == "TB":
+                return f"{value:.1f}{unit}" if unit != "B" else f"{int(value)}B"
+            value /= 1024
+        return f"{value:.1f}TB"
+
+    def _extract_hf_repo(value: str) -> str:
+        raw = (value or "").strip().rstrip("/")
+        m = re.search(r"huggingface\.co/([^/]+/[^/?#]+)", raw)
+        repo = m.group(1) if m else raw
+        repo = repo.replace("/tree/main", "").replace("/resolve/main", "")
+        _validate_repo_id(repo)
+        return repo
+
+    def _estimate_params_b(repo: str, filenames=None) -> float | None:
+        hay = " ".join([repo] + list(filenames or []))
+        matches = re.findall(r"(?<!\d)(\d+(?:\.\d+)?)\s*[bB](?![A-Za-z])", hay)
+        vals = [float(x) for x in matches if float(x) <= 1000]
+        return max(vals) if vals else None
+
+    def _quant_rank(name: str) -> int:
+        n = name.upper()
+        order = ["Q4_K_M", "Q4_K_S", "Q5_K_M", "Q5_K_S", "Q3_K_M", "Q6_K", "Q8_0", "Q2_K"]
+        for i, q in enumerate(order):
+            if q in n:
+                return i
+        return 99
+
+    def _analyze_hf_model(repo: str, backend: str = "llamacpp") -> dict:
+        try:
+            from huggingface_hub import HfApi
+            info = HfApi().model_info(repo, files_metadata=True)
+        except Exception as exc:
+            raise HTTPException(502, f"Hugging Face metadata failed: {exc}")
+        siblings = list(getattr(info, "siblings", None) or [])
+        files = []
+        total = 0
+        for s in siblings:
+            name = getattr(s, "rfilename", "") or ""
+            size = int(getattr(s, "size", None) or 0)
+            total += size
+            files.append({"name": name, "size": size, "size_human": _human_bytes(size)})
+        ggufs = [f for f in files if f["name"].lower().endswith(".gguf")]
+        params_b = _estimate_params_b(repo, [f["name"] for f in files])
+        risk = "safe"
+        reasons = []
+        recommended = None
+        alternatives = []
+        if ggufs:
+            ggufs.sort(key=lambda f: (_quant_rank(f["name"]), f["size"]))
+            recommended = ggufs[0]
+            recommended = {**recommended, "include": recommended["name"], "kind": "gguf"}
+            alternatives = [{**f, "include": f["name"], "kind": "gguf"} for f in ggufs[:12]]
+        else:
+            lower = repo.lower()
+            if any(q in lower for q in ("awq", "4bit", "gptq", "bnb", "int4")):
+                recommended = {"include": None, "kind": "quant_repo", "name": "whole quantized repo", "size": total, "size_human": _human_bytes(total)}
+            elif total and total < 16 * 1024**3:
+                recommended = {"include": None, "kind": "small_repo", "name": "whole repo", "size": total, "size_human": _human_bytes(total)}
+            else:
+                risk = "blocked"
+                reasons.append("No GGUF/quant file detected; whole safetensors repo may be too large.")
+        if params_b and params_b >= 70:
+            risk = "warn" if recommended and ggufs else "blocked"
+            reasons.append(f"{params_b:g}B params is very large; manual confirmation recommended.")
+        elif params_b and params_b >= 27:
+            if risk == "safe": risk = "warn"
+            reasons.append(f"{params_b:g}B params may be slow/heavy on this PC.")
+        if total >= 200 * 1024**3 and not recommended:
+            risk = "blocked"
+            reasons.append(f"Full repo is {_human_bytes(total)}.")
+        return {
+            "repo": repo,
+            "backend": backend,
+            "final_size_bytes": total,
+            "final_size_human": _human_bytes(total),
+            "params_b": params_b,
+            "is_gguf": bool(ggufs),
+            "recommended": recommended,
+            "alternatives": alternatives,
+            "risk": risk,
+            "reasons": reasons,
+            "files": files[:200],
+        }
+
+    @router.get("/api/cookbook/hf-model-fit")
+    async def hf_model_fit(request: Request, repo: str = Query(...), backend: str = Query("llamacpp")):
+        require_admin(request)
+        return _analyze_hf_model(_extract_hf_repo(repo), backend)
+
+    @router.get("/api/cookbook/hf-search")
+    async def hf_search(request: Request, q: str = Query(...), limit: int = Query(25, ge=1, le=50)):
+        require_admin(request)
+        try:
+            from huggingface_hub import HfApi
+            models = HfApi().list_models(search=q, limit=limit, full=False)
+            return {"results": [
+                {
+                    "repo": m.modelId,
+                    "downloads": getattr(m, "downloads", 0) or 0,
+                    "likes": getattr(m, "likes", 0) or 0,
+                    "tags": list(getattr(m, "tags", None) or [])[:20],
+                }
+                for m in models if getattr(m, "modelId", None)
+            ]}
+        except Exception as exc:
+            raise HTTPException(502, f"Hugging Face search failed: {exc}")
+
     @router.post("/api/model/download")
     async def model_download(request: Request, req: ModelDownloadRequest):
         """Download a HuggingFace model in a tmux session.
@@ -297,6 +418,17 @@ def setup_cookbook_routes() -> APIRouter:
         _dl_base = (req.local_dir.rstrip("/") + "/" + _dl_short) if req.local_dir else None
         _dl_shell = _shell_path(_dl_base) if _dl_base else None      # for hf CLI / bash
         _dl_pyarg = (", local_dir=os.path.expanduser(" + repr(_dl_base) + ")") if _dl_base else ""
+        if req.include:
+            _dl_pyarg += ", allow_patterns=[" + repr(req.include) + "]"
+        if req.smart and not req.include and not req.override:
+            fit = _analyze_hf_model(req.repo_id, "llamacpp")
+            if fit.get("risk") in {"warn", "blocked"} or fit.get("is_gguf"):
+                return {
+                    "ok": False,
+                    "error": "Smart download requires a recommended file/include or explicit override.",
+                    "fit": fit,
+                    "session_id": session_id,
+                }
 
         # Build the hf download command. Redirection to suppress the interactive
         # "update available? [Y/n]" prompt is added per-platform further down
@@ -558,6 +690,12 @@ def setup_cookbook_routes() -> APIRouter:
                 d = d.strip()
                 if d:
                     model_dirs.append(d)
+        
+        # Auto-include the E: drive HF hub path (scanned via its container mount)
+        hub_dir = _container_hub_dir()
+        if hub_dir and hub_dir not in model_dirs and os.path.isdir(hub_dir):
+            model_dirs.append(hub_dir)
+
         paths_code = _cached_model_scan_script(model_dirs)
 
         scan_py = TMUX_LOG_DIR / "scan_cache.py"
@@ -993,6 +1131,7 @@ def setup_cookbook_routes() -> APIRouter:
             )
             runner_lines.extend(_user_shell_path_bootstrap())
             runner_lines.append('ODYSSEUS_PREFLIGHT_EXIT=""')
+            runner_lines.append('export PYTHONNOUSERSITE=1')
             # Put Odysseus's own venv bin on PATH (local runs only) so the serve
             # shell resolves the bundled python3/hf, mirroring the download flow.
             if not remote:
@@ -1043,7 +1182,11 @@ def setup_cookbook_routes() -> APIRouter:
                     runner_lines.append('elif ! command -v llama-server &>/dev/null; then')
                     runner_lines.append('  echo "Native llama-server not found — building from source (one-time, may take a few minutes)..."')
                     runner_lines.append('  mkdir -p ~/bin')
-                    runner_lines.append('  cd ~ && [ -d llama.cpp ] || git clone --depth 1 https://github.com/ggml-org/llama.cpp')
+                    runner_lines.append('  cd ~')
+                    runner_lines.append('  if [ ! -f llama.cpp/CMakeLists.txt ]; then')
+                    runner_lines.append('    rm -rf llama.cpp')
+                    runner_lines.append('    git clone --depth 1 https://github.com/ggml-org/llama.cpp')
+                    runner_lines.append('  fi')
                     # Build with the right accelerator: Metal on macOS (llama.cpp
                     # enables it automatically, no flag), CUDA on Linux when present,
                     # else a plain CPU build. nproc is Linux-only — fall back to
@@ -2293,6 +2436,29 @@ def setup_cookbook_routes() -> APIRouter:
                             if downloading_lines:
                                 progress_text = downloading_lines[-1]
                             elif lines:
+                                progress_text = lines[-1]
+                    except Exception:
+                        pass
+
+                # Fast-crashing serve tasks can die before tmux capture succeeds.
+                # The runner tees stdout/stderr to this persistent file; prefer it
+                # whenever the pane is dead or empty so the UI never says "no logs".
+                if not full_snapshot:
+                    try:
+                        if remote:
+                            ssh_base = ["ssh"]
+                            if _tport and _tport != "22":
+                                ssh_base.extend(["-p", str(_tport)])
+                            log_cmd = ssh_base + [remote, "sh", "-lc", f"tail -n 500 /tmp/odysseus-tmux/{session_id}.log 2>/dev/null || true"]
+                            log = subprocess.run(log_cmd, timeout=10, capture_output=True, text=True)
+                            full_snapshot = (log.stdout or "").strip()[-12000:]
+                        else:
+                            log_path = TMUX_LOG_DIR / f"{session_id}.log"
+                            if log_path.exists():
+                                full_snapshot = log_path.read_text(encoding="utf-8", errors="replace").strip()[-12000:]
+                        if full_snapshot and not progress_text:
+                            lines = [l.strip() for l in full_snapshot.split('\n') if l.strip()]
+                            if lines:
                                 progress_text = lines[-1]
                     except Exception:
                         pass

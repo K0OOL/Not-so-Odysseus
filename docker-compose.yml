@@ -1,8 +1,14 @@
 services:
   odysseus:
-    build: .
+    build:
+      context: .
+      args:
+        INSTALL_OPTIONAL: "true"
     ports:
       - "${APP_BIND:-127.0.0.1}:${APP_PORT:-7000}:7000"
+      # llama-cpp-python server port — used by Antigravity IDE multi-agent system.
+      # The server is started manually via `docker compose exec odysseus python3 -m llama_cpp.server …`
+      - "127.0.0.1:11435:11434"
     volumes:
       - ./data:/app/data:z
       - ./logs:/app/logs:z
@@ -16,6 +22,10 @@ services:
       # land under /app/.local for the odysseus user. Persist them so a
       # container recreate does not silently remove installed serve engines.
       - ./data/local:/app/.local:z
+      # Optional E-drive model cache mounts. Direct E:/ binds let Docker see the host cache
+      # without relying on the LLM_EDRIVE_* vars.
+      - "E:/LLM-Models/huggingface/hub:/app/.cache/huggingface:z"
+      - "E:/LLM-Models/local:/app/.local:z"
     extra_hosts:
       # Lets the container reach local services on the Docker host, including
       # Ollama at http://host.docker.internal:11434.
@@ -24,10 +34,12 @@ services:
       - LLM_HOST=${LLM_HOST:-localhost}
       - LLM_HOSTS=${LLM_HOSTS:-}
       - OPENAI_API_KEY=${OPENAI_API_KEY:-}
-      - OLLAMA_BASE_URL=${OLLAMA_BASE_URL:-}
-      - RESEARCH_LLM_ENDPOINT=${RESEARCH_LLM_ENDPOINT:-}
+      - OLLAMA_BASE_URL=http://host.docker.internal:11434/v1
+      - RESEARCH_LLM_ENDPOINT=http://host.docker.internal:11434/v1
       - HF_TOKEN=${HF_TOKEN:-}
       - HUGGING_FACE_HUB_TOKEN=${HUGGING_FACE_HUB_TOKEN:-}
+      - HF_HOME=/app/.cache/huggingface
+      - ODYSSEUS_DOWNLOAD_DIR=E:\LLM-Models\huggingface\hub
       - SEARXNG_INSTANCE=http://searxng:8080
       - CHROMADB_HOST=chromadb
       - CHROMADB_PORT=8000
@@ -41,7 +53,7 @@ services:
       - EMBEDDING_URL=${EMBEDDING_URL:-}
       - EMBEDDING_MODEL=${EMBEDDING_MODEL:-}
       - EMBEDDING_API_KEY=${EMBEDDING_API_KEY:-}
-      - FASTEMBED_MODEL=${FASTEMBED_MODEL:-sentence-transformers/all-MiniLM-L6-v2}
+      - FASTEMBED_MODEL=${FASTEMBED_MODEL:-}
       - FASTEMBED_CACHE_PATH=${FASTEMBED_CACHE_PATH:-}
       - CLEANUP_INTERVAL_HOURS=${CLEANUP_INTERVAL_HOURS:-24}
       - ODYSSEUS_INPROCESS_POLLERS=${ODYSSEUS_INPROCESS_POLLERS:-1}
@@ -122,7 +134,7 @@ services:
       - SETUID
       - DAC_OVERRIDE
     healthcheck:
-      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8080/', timeout=5).read(1)\""]
+      test: [ "CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8080/', timeout=5).read(1)\"" ]
       interval: 5s
       timeout: 6s
       retries: 20

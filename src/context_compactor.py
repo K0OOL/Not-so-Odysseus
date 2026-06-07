@@ -348,12 +348,17 @@ async def maybe_compact(
 
     compacted = system_msgs + [summary_msg] + recent
 
-    # Update session history to match. Pass len(system_msgs) so the
-    # recent_history slice in _update_session_history uses the correct
-    # offset — session.history INCLUDES the system messages, but
-    # split_point is indexed against convo_msgs which does NOT. Without
-    # this, the slice drops the leading system message(s).
-    _update_session_history(session, split_point, summary, system_msg_count=len(system_msgs))
+    # Only count leading system messages that actually live in session.history.
+    # The full `messages` list also includes transient preface/RAG/memory system
+    # prompts; counting those here shifts the slice too far and can drop recent
+    # real chat turns from the persisted compacted history.
+    history_system_count = 0
+    for hist_msg in getattr(session, "history", []) or []:
+        if getattr(hist_msg, "role", None) == "system":
+            history_system_count += 1
+            continue
+        break
+    _update_session_history(session, split_point, summary, system_msg_count=history_system_count)
 
     new_used = estimate_tokens(compacted)
     logger.info(

@@ -12,7 +12,10 @@
 # host's numeric render group id when needed. See docker/gpu.amd.yml for details.
 services:
   odysseus:
-    build: .
+    build:
+      context: .
+      args:
+        INSTALL_OPTIONAL: "true"
     ports:
       - "${APP_BIND:-127.0.0.1}:${APP_PORT:-7000}:7000"
     volumes:
@@ -21,13 +24,10 @@ services:
       # Cookbook remote-server SSH identity. Odysseus can generate a key here;
       # add the shown public key to each remote server's authorized_keys.
       - ./data/ssh:/app/.ssh:z
-      # Cookbook local model cache. Inside Docker, "Local" means the Odysseus
-      # container, so persist its HuggingFace cache under ./data/huggingface.
-      - ./data/huggingface:/app/.cache/huggingface:z
-      # Cookbook-installed Python CLIs/packages (vLLM, llama-cpp-python, etc.)
-      # land under /app/.local for the odysseus user. Persist them so a
-      # container recreate does not silently remove installed serve engines.
-      - ./data/local:/app/.local:z
+      # Optional E-drive model cache mounts. Direct E:/ binds let Docker see the host cache
+      # without relying on the LLM_EDRIVE_* vars.
+      - "E:/LLM-Models/huggingface/hub:/app/.cache/huggingface:z"
+      - "E:/LLM-Models/local:/app/.local:z"
     extra_hosts:
       # Lets the container reach local services on the Docker host, including
       # Ollama at http://host.docker.internal:11434.
@@ -36,8 +36,8 @@ services:
       - LLM_HOST=${LLM_HOST:-localhost}
       - LLM_HOSTS=${LLM_HOSTS:-}
       - OPENAI_API_KEY=${OPENAI_API_KEY:-}
-      - OLLAMA_BASE_URL=${OLLAMA_BASE_URL:-}
-      - RESEARCH_LLM_ENDPOINT=${RESEARCH_LLM_ENDPOINT:-}
+      - OLLAMA_BASE_URL=http://host.docker.internal:11434/v1
+      - RESEARCH_LLM_ENDPOINT=http://host.docker.internal:11434/v1
       - HF_TOKEN=${HF_TOKEN:-}
       - HUGGING_FACE_HUB_TOKEN=${HUGGING_FACE_HUB_TOKEN:-}
       - SEARXNG_INSTANCE=http://searxng:8080
@@ -53,7 +53,7 @@ services:
       - EMBEDDING_URL=${EMBEDDING_URL:-}
       - EMBEDDING_MODEL=${EMBEDDING_MODEL:-}
       - EMBEDDING_API_KEY=${EMBEDDING_API_KEY:-}
-      - FASTEMBED_MODEL=${FASTEMBED_MODEL:-sentence-transformers/all-MiniLM-L6-v2}
+      - FASTEMBED_MODEL=${FASTEMBED_MODEL:-}
       - FASTEMBED_CACHE_PATH=${FASTEMBED_CACHE_PATH:-}
       - CLEANUP_INTERVAL_HOURS=${CLEANUP_INTERVAL_HOURS:-24}
       - ODYSSEUS_INPROCESS_POLLERS=${ODYSSEUS_INPROCESS_POLLERS:-1}

@@ -542,6 +542,8 @@ function _serveOutputLooksReady(task) {
   const out = String(task?.output || '');
   return !!task?._serveReady
     || /Application startup complete/i.test(out)
+    || /Starting vLLM server on\s+http:\/\//i.test(out)
+    || /Started server process/i.test(out)
     || /Ollama API ready on port\s+\d+/i.test(out)
     || /(?:GET|POST)\s+\/[^\s]*\s+HTTP\/[\d.]+"\s*2\d\d/i.test(out);
 }
@@ -591,7 +593,8 @@ function _downloadDedupeKey(task) {
   if (!task || task.type !== 'download') return '';
   const repo = _downloadRepoKey(task);
   if (!repo) return '';
-  return `${_downloadHostKey(task)}\n${repo}`;
+  const include = String(task?.payload?.include || task?.include || '').trim();
+  return `${_downloadHostKey(task)}\n${repo}\n${include}`;
 }
 
 function _pruneQueuedDownloadDuplicates(tasks) {
@@ -1102,6 +1105,10 @@ export async function _syncFromServer() {
     if (state.serveState) {
       localStorage.setItem(SERVE_STATE_KEY, JSON.stringify(state.serveState));
     }
+    // Auto-populate Local server's downloadDir from the advertised/cached value
+    if (typeof _ensureLocalServerDownloadDir === 'function') {
+      _ensureLocalServerDownloadDir();
+    }
     return true;
   } catch { return false; }
 }
@@ -1533,7 +1540,7 @@ export async function _launchServeTask(shortName, repo, cmd, fields, hostOverrid
     env_prefix: envPrefix || undefined,
     hf_token: _envState.hfToken || undefined,
     gpus: _envState.gpus || undefined,
-    platform: _hplatform || undefined,
+    platform: _host ? (_hplatform || undefined) : undefined,
   };
 
   try {
@@ -3112,6 +3119,7 @@ async function _reconnectTask(el, task) {
               fd.append('base_url', baseUrl);
               fd.append('name', task.name);
               fd.append('skip_probe', 'true');
+              if (task.name) fd.append('pinned_models', task.name);
               _appendCookbookEndpointScope(fd, task.remoteHost || '');
               if (_isDiffusion) fd.append('model_type', 'image');
               return fetch('/api/model-endpoints', { method: 'POST', credentials: 'same-origin', body: fd });

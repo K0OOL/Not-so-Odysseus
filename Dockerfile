@@ -18,6 +18,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     tmux \
     openssh-client \
     gosu \
+    libnuma1 \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
@@ -27,7 +28,10 @@ WORKDIR /app
 ARG INSTALL_OPTIONAL=false
 COPY requirements.txt requirements-optional.txt ./
 RUN pip install --no-cache-dir -r requirements.txt \
-    && if [ "$INSTALL_OPTIONAL" = "true" ]; then pip install --no-cache-dir -r requirements-optional.txt; fi
+    && if [ "$INSTALL_OPTIONAL" = "true" ]; then \
+        pip install --no-cache-dir torch \
+        && pip install --no-cache-dir -r requirements-optional.txt; \
+    fi
 
 # Copy app code
 COPY . .

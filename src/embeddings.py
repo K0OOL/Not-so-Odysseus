@@ -32,7 +32,7 @@ from typing import List, Optional
 logger = logging.getLogger(__name__)
 
 _DEFAULT_MODEL = "all-minilm:l6-v2"
-_DEFAULT_FASTEMBED_MODEL = "sentence-transformers/all-MiniLM-L6-v2"
+_DEFAULT_FASTEMBED_MODEL = ""
 
 
 class EmbeddingClient:
@@ -244,9 +244,13 @@ def get_embedding_client():
             _http_embed_down = True
             logger.warning(f"HTTP embedding API unavailable ({e}); using local FastEmbed for the rest of this process")
 
-    # Fall back to local fastembed
+    # Fall back to local fastembed only when explicitly configured.
+    fastembed_model = (os.getenv("FASTEMBED_MODEL") or "").strip()
+    if not fastembed_model:
+        logger.info("FastEmbed fallback disabled: FASTEMBED_MODEL is unset")
+        return None
     try:
-        client = FastEmbedClient()
+        client = FastEmbedClient(model=fastembed_model)
         client.get_sentence_embedding_dimension()
         logger.info(f"Using local FastEmbed: model={client.model}")
         return client

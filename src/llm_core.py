@@ -848,6 +848,63 @@ def _sanitize_llm_messages(messages: List[Dict]) -> List[Dict]:
 
     return merged
 
+
+def _model_rejects_system_role(model: str) -> bool:
+    """Return True for chat templates that reject OpenAI `system` role."""
+    name = (model or "").lower()
+    return "gemma" in name
+
+
+def _fold_system_into_user(messages: List[Dict], model: str) -> List[Dict]:
+    """Merge system instructions into user content for models without system role."""
+    if not _model_rejects_system_role(model):
+        return messages
+
+    sys_parts = [str(m.get("content") or "") for m in messages if m.get("role") == "system"]
+    sys_text = "\n\n".join(part for part in sys_parts if part).strip()
+    if not sys_text:
+        return [m for m in messages if m.get("role") != "system"]
+
+    folded = []
+    inserted = False
+    prefix = f"[System instructions]\n{sys_text}\n\n[User]\n"
+    for msg in messages:
+        if msg.get("role") == "system":
+            continue
+        if not inserted and msg.get("role") == "user":
+            fixed = dict(msg)
+            content = fixed.get("content")
+            if isinstance(content, list):
+                fixed["content"] = [{"type": "text", "text": prefix.rstrip()}] + content
+            else:
+                user_text = str(content) if content is not None else ""
+                fixed["content"] = prefix + user_text
+            folded.append(fixed)
+            inserted = True
+        else:
+            folded.append(msg)
+
+    if not inserted:
+        folded.insert(0, {"role": "user", "content": sys_text})
+    return folded
+
+
+def _normalize_system_messages(messages: List[Dict], model: str) -> List[Dict]:
+    """Consolidate system messages, then adapt models that reject system role."""
+    sys_parts = []
+    non_sys = []
+    for m in messages:
+        if m.get("role") == "system":
+            sys_parts.append(m.get("content") or "")
+        else:
+            non_sys.append(m)
+    if sys_parts:
+        normalized = [{"role": "system", "content": "\n\n".join(sys_parts)}] + non_sys
+    else:
+        normalized = non_sys
+    return _fold_system_into_user(normalized, model)
+
+
 def _normalize_anthropic_url(url: str) -> str:
     """Ensure Anthropic URL points to /v1/messages."""
     url = url.rstrip("/")
@@ -990,18 +1047,7 @@ def llm_call(url: str, model: str, messages: List[Dict], temperature: float = LL
 
     messages_copy = _sanitize_llm_messages(messages)
 
-    # Consolidate multiple system messages into one at the start.
-    sys_parts = []
-    non_sys = []
-    for m in messages_copy:
-        if m.get("role") == "system":
-            sys_parts.append(m.get('content') or '')
-        else:
-            non_sys.append(m)
-    if sys_parts:
-        messages_copy = [{"role": "system", "content": "\n\n".join(sys_parts)}] + non_sys
-    else:
-        messages_copy = non_sys
+    messages_copy = _normalize_system_messages(messages_copy, model)
 
     provider = _detect_provider(url)
     cache_key = _get_cache_key(url, model, messages_copy, temperature, max_tokens)
@@ -1137,18 +1183,7 @@ async def llm_call_async(
     provider = _detect_provider(url)
     messages_copy = _sanitize_llm_messages(messages)
 
-    # Consolidate multiple system messages into one at the start.
-    sys_parts = []
-    non_sys = []
-    for m in messages_copy:
-        if m.get("role") == "system":
-            sys_parts.append(m.get('content') or '')
-        else:
-            non_sys.append(m)
-    if sys_parts:
-        messages_copy = [{"role": "system", "content": "\n\n".join(sys_parts)}] + non_sys
-    else:
-        messages_copy = non_sys
+    messages_copy = _normalize_system_messages(messages_copy, model)
 
     cache_key = _get_cache_key(url, model, messages_copy, temperature, max_tokens)
     cached_response = _get_cached_response(cache_key)
@@ -1254,19 +1289,7 @@ async def stream_llm(url: str, model: str, messages: List[Dict], temperature: fl
     provider = _detect_provider(url)
     messages_copy = _sanitize_llm_messages(messages)
 
-    # Consolidate multiple system messages into one at the start.
-    # Some models (e.g. Qwen3.5) reject system messages that aren't first.
-    sys_parts = []
-    non_sys = []
-    for m in messages_copy:
-        if m.get("role") == "system":
-            sys_parts.append(m.get('content') or '')
-        else:
-            non_sys.append(m)
-    if sys_parts:
-        messages_copy = [{"role": "system", "content": "\n\n".join(sys_parts)}] + non_sys
-    else:
-        messages_copy = non_sys
+    messages_copy = _normalize_system_messages(messages_copy, model)
 
     if provider == "anthropic":
         target_url = _normalize_anthropic_url(url)

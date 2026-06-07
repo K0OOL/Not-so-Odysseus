@@ -75,6 +75,14 @@ def _validate_include(v: str | None) -> str | None:
     return v
 
 
+def _validate_local_dir(v: str | None) -> str | None:
+    if v is None or v == "":
+        return None
+    if _LOCAL_DIR_RE.match(v) or _WINDOWS_DRIVE_PATH_RE.match(v):
+        return v
+    raise HTTPException(400, "Invalid local_dir path")
+
+
 def _validate_remote_host(v: str | None) -> str | None:
     if v is None or v == "":
         return None
@@ -91,13 +99,6 @@ def _validate_token(v: str | None) -> str | None:
     return v
 
 
-def _validate_local_dir(v: str | None) -> str | None:
-    if v is None or v == "":
-        return None
-    v = v.rstrip("/") or "/"
-    if not _LOCAL_DIR_RE.match(v):
-        raise HTTPException(400, "Invalid local_dir — must be an absolute or ~ path with no spaces or shell metacharacters")
-    return v
 
 
 def _validate_ssh_port(v: str | None) -> str | None:
@@ -705,6 +706,8 @@ class ModelDownloadRequest(BaseModel):
     platform: str | None = None    # "linux", "termux", or "windows"
     local_dir: str | None = None   # base dir to download into (a per-model subfolder is created under it); None = default HF cache
     disable_hf_transfer: bool = False  # skip the Rust hf_transfer downloader — slower but far more reliable on large files (used by retries)
+    smart: bool = False            # request came through smart fit analysis
+    override: bool = False         # allow risky whole-repo download after explicit user confirmation
 
 
 class ServeRequest(BaseModel):

@@ -1039,7 +1039,8 @@ def setup_shell_routes() -> APIRouter:
                 )
                 pkg["applicable"] = status.applicable
                 pkg["install_hint"] = status.install_hint
-        return {"packages": packages}
+        import sys as _sys
+        return {"packages": packages, "platform": _sys.platform}
 
     @router.post("/api/cookbook/packages/install")
     async def install_package(request: Request):
@@ -1064,6 +1065,17 @@ def setup_shell_routes() -> APIRouter:
         )
         stdout, stderr = await proc.communicate()
         if proc.returncode == 0:
+            _prepend_user_install_bins_to_path()
+            import importlib
+            import site
+
+            importlib.invalidate_caches()
+            try:
+                user_site = site.getusersitepackages()
+                if user_site and os.path.isdir(user_site) and user_site not in _sys.path:
+                    _sys.path.append(user_site)
+            except Exception:
+                pass
             return {"ok": True, "output": stdout.decode()[-200:]}
         return {"ok": False, "error": stderr.decode()[-300:]}
 
@@ -1079,7 +1091,8 @@ def setup_shell_routes() -> APIRouter:
         stuck on a CPU-only llama-server.
         """
         _require_admin(request)
-        from routes.cookbook_helpers import _llama_cpp_rebuild_cmd
+        # pyrefly: ignore [missing-import]
+        from .cookbook_helpers import _llama_cpp_rebuild_cmd
         body = await request.json()
         engine = str(body.get("engine") or "llamacpp").strip()
         if engine != "llamacpp":

@@ -424,6 +424,62 @@ function _applyEngineFilter(models) {
   });
 }
 
+async function _hfLiveFetch(search, list) {
+  const raw = String(search || '').trim();
+  const isUrl = /huggingface\.co\//i.test(raw);
+  const query = raw.replace(/^hf:\s*/i, '').trim();
+  if (!query && !isUrl) return false;
+  const wp = spinnerModule.createWhirlpool(18);
+  list.innerHTML = `<div class="hwfit-loading" style="flex-direction:column;gap:6px;"></div>`;
+  list.firstElementChild.appendChild(wp.element);
+  list.firstElementChild.insertAdjacentHTML('beforeend', '<div style="opacity:.55;font-size:11px;">Searching Hugging Face live…</div>');
+  try {
+    let repos = [];
+    const m = query.match(/huggingface\.co\/([^/]+\/[^/?#]+)/i);
+    if (m) repos = [m[1]];
+    else if (/^[^\s/]+\/[^\s/]+$/.test(query)) repos = [query];
+    else {
+      const res = await fetch(`/api/cookbook/hf-search?q=${encodeURIComponent(query)}&limit=25`, { credentials: 'same-origin' });
+      if (!res.ok) throw new Error(`HF search HTTP ${res.status}`);
+      const data = await res.json();
+      repos = (data.results || []).map(r => r.repo).filter(Boolean).slice(0, 25);
+    }
+    const fits = [];
+    for (const repo of repos.slice(0, 20)) {
+      try {
+        const r = await fetch(`/api/cookbook/hf-model-fit?repo=${encodeURIComponent(repo)}&backend=llamacpp`, { credentials: 'same-origin' });
+        if (!r.ok) continue;
+        const fit = await r.json();
+        const rec = fit.recommended || {};
+        const risk = fit.risk || 'safe';
+        fits.push({
+          name: fit.repo,
+          quant_repo: fit.repo,
+          quant: rec.include || rec.kind || (fit.is_gguf ? 'GGUF' : 'repo'),
+          parameter_count: fit.params_b ? `${fit.params_b}B` : '?',
+          required_gb: rec.size ? rec.size / (1024 ** 3) : (fit.final_size_bytes || 0) / (1024 ** 3),
+          context: 0,
+          speed_tps: 0,
+          score: risk === 'safe' ? 90 : (risk === 'warn' ? 55 : 5),
+          fit_level: risk === 'safe' ? 'good' : (risk === 'warn' ? 'marginal' : 'too_tight'),
+          run_mode: fit.is_gguf ? 'llama.cpp' : 'hf',
+          is_gguf: fit.is_gguf,
+          gguf_sources: rec.include ? [{ repo: fit.repo, file: rec.include }] : [],
+          _hf_live: true,
+          _hf_fit: fit,
+        });
+      } catch {}
+    }
+    _hwfitCache = { system: _hwfitCache?.system || {}, models: fits };
+    _hwfitRenderList(list, fits);
+  } catch (e) {
+    list.innerHTML = `<div class="hwfit-loading" style="color:var(--red);">HF live search failed: ${esc(e.message)}</div>`;
+  } finally {
+    try { wp.destroy(); } catch {}
+  }
+  return true;
+}
+
 export async function _hwfitFetch(fresh = false) {
   const _tk = ++_hwfitFetchToken;
   const useCase = document.getElementById('hwfit-usecase')?.value || '';
@@ -432,6 +488,17 @@ export async function _hwfitFetch(fresh = false) {
   const list = document.getElementById('hwfit-list');
   const hw = document.getElementById('hwfit-hw');
   if (!list) return;
+  if (
+    /^hf:\s*/i.test(search) ||                       // hf: prefix
+    /huggingface\.co\//i.test(search) ||             // full HF URL
+    /^[\w.-]+\/[\w.-][\w.-]*$/.test(search) ||        // ← new: org/model-name pattern
+    list.dataset.hfLive === '1'                      // explicit
+  ) {
+    list.dataset.hfLive = '';
+    const q = search.replace(/^hf:\s*/i, '');
+    await _hfLiveFetch(q, list);
+    return;
+  }
   const hasManualOrDismissed = !!_manualHwState() || _dismissedHwChips.size > 0;
   if (hasManualOrDismissed) fresh = true;
   // Instant paint from the persisted cache (skipped on a forced Rescan), so a
@@ -585,6 +652,15 @@ export async function _hwfitFetch(fresh = false) {
     // for local tasks (menu items, shell commands, etc.).
     if (!remoteHost && data.system && data.system.platform) {
       _envState.platform = data.system.platform;
+      try {
+        localStorage.setItem('hwfit_platform_v1', data.system.platform);
+      } catch {}
+    }
+    // Also stash the download dir advertised by the backend
+    if (data.download_dir != null) {
+      _envState.downloadDir = data.download_dir;
+      try { localStorage.setItem('hwfit_download_dir_v1', data.download_dir); }
+      catch {}
     }
     // Sort client-side by the active column so the highest↔lowest toggle is
     // deterministic (the previous array .reverse() didn't reliably flip).
@@ -1073,6 +1149,11 @@ export function _expandModelRow(row, modelData) {
     html += `<button class="cookbook-btn hwfit-serve-expand-btn" title="Configure & serve">Configure</button>`;
   }
   html += `</div>`;
+  if (modelData._hf_fit) {
+    const fit = modelData._hf_fit;
+    const rec = fit.recommended || {};
+    html += `<div class="hwfit-panel-note">HF live • repo ${esc(fit.final_size_human || '?')} • recommended ${esc(rec.name || rec.include || rec.kind || 'whole repo')} • ${esc(fit.risk || 'safe')}${fit.reasons?.length ? ' — ' + esc(fit.reasons.join('; ')) : ''}</div>`;
+  }
   if (modelData.is_image_gen) {
     html += `<div style="font-size:10px;opacity:0.5;margin-top:4px;">${esc((modelData.capabilities || []).join(' \u00B7 ') || '')}${modelData.description ? ' \u2014 ' + esc(modelData.description) : ''}</div>`;
   } else if (_requiresAcceleratorBackend(modelData)) {
@@ -1183,8 +1264,10 @@ export function _expandModelRow(row, modelData) {
         cmd += ` --mem-fraction-static ${gpuUtil}`;
         cmd += ' --trust-remote-code';
       } else if (runBackend === 'llamacpp') {
-        const dir = `"$HOME/.cache/huggingface/hub/models--${modelData.name.replace(/\//g, '--')}/snapshots"`;
-        const ggufPath = `$({ find ${dir} -name '*-00001-of-*.gguf' 2>/dev/null | sort; find ${dir} -name '*.gguf' 2>/dev/null | sort; } | head -1)`;
+        const cacheRoot = '"$HOME/.cache/huggingface"';
+        const repoSlug = modelData.name.replace(/\//g, '--');
+        const repoSnap = `$(find ${cacheRoot} -path "*/models--${repoSlug}/snapshots/*" -type d 2>/dev/null | sort | tail -1)`;
+        const ggufPath = `$(find ${cacheRoot} -path "*/models--${repoSlug}/snapshots/*" -type f \( -name '*.gguf' -o -name '*-00001-of-*.gguf' \) 2>/dev/null | sort | head -1)`;
         cmd = `MODEL_FILE=${ggufPath} && { [ -n "$MODEL_FILE" ] && [ -f "$MODEL_FILE" ]; } || { echo "ERROR: No GGUF found on this host. Download a GGUF quant or switch backend."; exit 1; } && llama-server --model "$MODEL_FILE" --host 0.0.0.0 --port 8080 -ngl 99 -c ${maxCtx} || python3 -m llama_cpp.server --model "$MODEL_FILE" --host 0.0.0.0 --port 8080 --n_gpu_layers 99 --n_ctx ${maxCtx}`;
       } else {
         cmd = `vllm serve ${modelData.name} --host 0.0.0.0 --port ${port}`;
@@ -1218,7 +1301,7 @@ export function _expandModelRow(row, modelData) {
         env_prefix: envPrefix || undefined,
         hf_token: _envState.hfToken || undefined,
         gpus: _envState.gpus || cudaDevices || undefined,
-        platform: _envState.platform || undefined,
+        platform: host ? (_envState.platform || undefined) : undefined,
       };
 
       try {
@@ -1285,6 +1368,7 @@ export function _hwfitInit() {
   const ctx = document.getElementById('hwfit-context');
   const ctxLabel = document.getElementById('hwfit-context-label');
   const search = document.getElementById('hwfit-search');
+  const liveBtn = document.getElementById('hwfit-live-btn');
   const remote = document.getElementById('hwfit-host');
   _syncCtxControl();
   if (uc) uc.addEventListener('change', () => _hwfitFetch());
@@ -1325,6 +1409,14 @@ export function _hwfitInit() {
       }
       _hwfitCache = null;
       _hwfitFetch();
+    });
+  }
+  if (liveBtn && !liveBtn.dataset.bound) {
+    liveBtn.dataset.bound = '1';
+    liveBtn.addEventListener('click', () => {
+      const list = document.getElementById('hwfit-list');
+      if (list) list.dataset.hfLive = '1';
+      _hwfitFetch(true);
     });
   }
   // Rescan — force a fresh hardware probe (bypasses the per-host cache).
