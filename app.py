@@ -148,6 +148,20 @@ class _RequestTimeoutMiddleware(_BaseHTTPMiddleware):
 
 app.add_middleware(_RequestTimeoutMiddleware)
 
+
+# ========= STATIC REVALIDATION MIDDLEWARE =========
+# Force browsers to revalidate static assets instead of serving stale modules.
+# ETag + no-cache means: reuse the cached file ONLY if the server confirms it's
+# unchanged (304). Fixes "must hard-refresh after deploy" without query strings,
+# which would break the ES module graph.
+@app.middleware("http")
+async def _static_revalidate_headers(request: Request, call_next):
+    response = await call_next(request)
+    path = request.url.path
+    if path.startswith("/static/") and (path.endswith(".js") or path.endswith(".css") or path.endswith(".html")):
+        response.headers["Cache-Control"] = "no-cache, must-revalidate"
+    return response
+
 # ========= AUTH =========
 from routes.auth_routes import setup_auth_routes, SESSION_COOKIE
 
