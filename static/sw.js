@@ -7,7 +7,7 @@
 //   - Other static assets (images/fonts/libs): cache-first with bg refresh.
 //   - API / non-GET: never cached.
 // Bump CACHE_NAME whenever the precache list or SW logic changes.
-const CACHE_NAME = 'odysseus-v327';
+const CACHE_NAME = 'odysseus-v328';
 
 // Core shell precached on install so repeat opens are instant without any
 // network wait. Keep this list in sync with the <script type="module"> tags
@@ -94,19 +94,18 @@ self.addEventListener('fetch', (e) => {
   // Never touch API calls or non-GET.
   if (url.pathname.startsWith('/api/') || e.request.method !== 'GET') return;
 
-  // HTML navigation: stale-while-revalidate the app shell — but ONLY for the
-  // SPA root. Other navigations (e.g. a deep-linked /static/*.html page) must
-  // go to the network/static handlers below; otherwise every navigation was
-  // served the app index, replacing the page the user actually asked for.
+  // HTML navigation: network-first for the SPA root. Instant reflects latest
+  // index.html edits without background refresh lag / hard-reload requirement.
   if (e.request.mode === 'navigate' && url.pathname === '/') {
     e.respondWith(
       caches.open(CACHE_NAME).then(async cache => {
-        const cached = await cache.match('/');
-        const network = fetch(e.request).then(res => {
+        try {
+          const res = await fetch(e.request);
           if (res && res.ok) cache.put('/', res.clone());
           return res;
-        }).catch(() => cached);
-        return cached || network;
+        } catch {
+          return (await cache.match('/')) || Response.error();
+        }
       })
     );
     return;
