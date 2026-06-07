@@ -2277,29 +2277,7 @@
 <script type="module" src="/static/js/tourHints.js"></script>
 <script type="module" src="/static/js/tourAutoplay.js"></script>
 <script type="module" src="/static/js/fileHandler.js"></script>
-<script type="module" src="/static/js/voiceRecorder.js"></script>
-<script type="module" src="/static/js/models.js"></script>  <!-- This must come BEFORE app.js -->
-<script type="module" src="/static/js/rag.js"></script>
-<script type="module" src="/static/js/presets.js"></script>
-<script type="module" src="/static/js/search.js"></script>
-<script type="module" src="/static/js/spinner.js"></script>
-<script type="module" src="/static/js/tts-ai.js"></script>
-<script type="module" src="/static/js/document.js"></script>
-<script type="module" src="/static/js/gallery.js"></script>
-<script type="module" src="/static/js/chatRenderer.js"></script>
-<script type="module" src="/static/js/codeRunner.js"></script>
-<script type="module" src="/static/js/chatStream.js"></script>
-<script type="module" src="/static/js/chat.js?v=20260604s"></script>
-<script type="module" src="/static/js/cookbook.js"></script>
-<script src="/static/js/cookbookSchedule.js"></script>
-<script type="module" src="/static/js/search-chat.js"></script>
-<script type="module" src="/static/js/compare/index.js"></script>
-<script type="module" src="/static/js/theme.js"></script>
-<script type="module" src="/static/js/censor.js"></script>
-<script type="module" src="/static/js/settings.js"></script>
-<script type="module" src="/static/js/admin.js"></script>
-<script type="module" src="/static/js/assistant.js"></script>
-<script type="module" src="/static/app.js"></script>  <!-- app.js must be LAST -->
+<script type="module" src="/static/app.js"></script>  <!-- app.js is the orchestrator, it imports all of the above -->
 <script type="module" src="/static/js/init.js"></script>
 <script type="module" src="/static/js/a11y.js"></script>
 <script nonce="{{CSP_NONCE}}">if('serviceWorker' in navigator){navigator.serviceWorker.register('/static/sw.js').catch(()=>{});}</script>
