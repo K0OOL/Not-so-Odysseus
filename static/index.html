@@ -2266,18 +2266,8 @@
 
 
 
-<!-- Load modules in this order -->
-<script type="module" src="/static/js/storage.js"></script>
-<script type="module" src="/static/js/ui.js"></script>
-<script type="module" src="/static/js/markdown.js"></script>
-<script type="module" src="/static/js/dragSort.js"></script>
-<script type="module" src="/static/js/sessions.js"></script>
-<script type="module" src="/static/js/memory.js"></script>
-<script type="module" src="/static/js/skills.js"></script>
-<script type="module" src="/static/js/tourHints.js"></script>
-<script type="module" src="/static/js/tourAutoplay.js"></script>
-<script type="module" src="/static/js/fileHandler.js"></script>
-<script type="module" src="/static/app.js"></script>  <!-- app.js is the orchestrator, it imports all of the above -->
+<!-- app.js is the ESM orchestrator — it imports all modules via ES import statements -->
+<script type="module" src="/static/app.js"></script>
 <script type="module" src="/static/js/init.js"></script>
 <script type="module" src="/static/js/a11y.js"></script>
 <script nonce="{{CSP_NONCE}}">if('serviceWorker' in navigator){navigator.serviceWorker.register('/static/sw.js').catch(()=>{});}</script>
