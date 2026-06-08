@@ -172,22 +172,20 @@ function _getPort(hostOrTask) {
 
 /** Get platform for a given host (or task object). Returns 'windows', 'termux', 'linux', or '' */
 export function _getPlatform(hostOrTask) {
-  const isWinBrowser = (window.navigator.userAgent || window.navigator.platform || '').toLowerCase().includes('win');
-  const _savedPlatform = (() => {
-    try { return localStorage.getItem('hwfit_platform_v1') || ''; }
-    catch { return ''; }
-  })();
+  // The "local" server is the Odysseus BACKEND host — here, your Linux
+  // container — NOT the browser. A Windows browser must never decide which
+  // serve backends are offered, so we never infer "windows" from the
+  // user-agent. Trust the backend-reported platform; otherwise assume linux.
   if (!hostOrTask || hostOrTask === 'local') {
     if (_hwfitCache?.system?.platform) {
       return _hwfitCache.system.platform === 'win32' ? 'windows' : 'linux';
     }
-    // Probe result wins; then last-known cached platform; browser UA is last resort.
-    return _envState.platform || _savedPlatform || (isWinBrowser ? 'windows' : '');
+    return _envState.platform || 'linux';
   }
   if (typeof hostOrTask === 'object') {
     const h = hostOrTask.remoteHost;
     if (!h || h === 'local') {
-      return hostOrTask.platform || _envState.platform || (isWinBrowser ? 'windows' : '');
+      return hostOrTask.platform || _envState.platform || 'linux';
     }
     return hostOrTask.platform || _getPlatform(h);
   }
@@ -213,7 +211,7 @@ function _detectModelOptimizations(modelName) {
   const opts = { envVars: [], flags: [], tips: [] };
 
   // Qwen3.5 MoE models
-  if (n.includes('qwen3.5') || n.includes('qwen3-') && (n.includes('a10b') || n.includes('a22b') || n.includes('a3b'))) {
+  if ((n.includes('qwen3.5') || n.includes('qwen3-')) && (n.includes('a10b') || n.includes('a22b') || n.includes('a3b'))) {
     opts.envVars.push('VLLM_USE_DEEP_GEMM=0', 'VLLM_USE_FLASHINFER_MOE_FP16=1', 'VLLM_USE_FLASHINFER_SAMPLER=0', 'OMP_NUM_THREADS=4');
     opts.flags.push('--enable-expert-parallel', '--reasoning-parser qwen3');
     opts.tips.push('MoE optimizations: expert parallel + flashinfer MoE kernels');

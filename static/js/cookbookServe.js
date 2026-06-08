@@ -211,29 +211,31 @@ function _formatGgufSize(bytes) {
 }
 
 function _ggufFilesForModel(model) {
-  return Array.isArray(model?.gguf_files)
-    ? model.gguf_files.filter(f => f && typeof f.rel_path === 'string' && f.rel_path.trim().length > 0)
-    : [];
+  const list = [];
+  for (const f of (model.files || [])) {
+    if (String(f.rel_path || '').toLowerCase().endsWith('.gguf')) {
+      list.push(f);
+    }
+  }
+  return list;
 }
 
 // Maps a host Windows path under the known download dir to its container mount.
-// E:\LLM-Models\huggingface\hub\...  →  /app/.cache/huggingface/...
+// E:\LLM-Models\huggingface\hub\... → /app/.cache/huggingface/...
 function _toContainerPath(p) {
   if (!p) return p;
-  // Only translate when we're actually targeting a Linux container.
-  if (_isWindows()) return p;
+  if (_isWindows()) return p;                       // only translate for the Linux container
   const advertised = (_envState.downloadDir || '').trim();
   const cached = (() => { try { return localStorage.getItem('hwfit_download_dir_v1') || ''; } catch { return ''; } })();
-  const downloadDir = (advertised || cached).trim();   // e.g. E:\LLM-Models\huggingface\hub
-  const containerHub = '/app/.cache/huggingface';      // mount target
-  // Normalize separators for comparison
+  const downloadDir = (advertised || cached).trim();
+  const containerHub = '/app/.cache/huggingface';
   const normP = p.replace(/\\/g, '/');
   const normDir = downloadDir.replace(/\\/g, '/').replace(/\/+$/, '');
   if (normDir && normP.toLowerCase().startsWith(normDir.toLowerCase())) {
     const rest = normP.slice(normDir.length).replace(/^\/+/, '');
     return rest ? `${containerHub}/${rest}` : containerHub;
   }
-  // Generic fallback: any X:\...\huggingface\hub path on a Linux target → map to containerHub
+  // Generic fallback: any X:\...\huggingface\hub path on a Linux target → containerHub
   if (/^[a-zA-Z]:[\/\\]/.test(p.replace(/\//g, '\\'))) {
     const normP2 = p.replace(/\\/g, '/');
     const idx = normP2.toLowerCase().indexOf('/huggingface/hub/');
@@ -303,13 +305,13 @@ function _ggufSearchDirExpr(model, repo) {
     ? (model.is_local_dir && model.path)
       ? `${String(model.path || '').replace(/\/+$/, '').replace(/\//g, '\\')}\\${repo.replace(/\//g, '\\')}`
       : (model.path)
-        ? `${String(model.path || '').replace(/\/+$/, '').replace(/\//g, '\\')}\\models--${repo.replace(/\//g, '--')}\\snapshots`
-        : `$env:USERPROFILE\\.cache\\huggingface\\hub\\models--${repo.replace(/\//g, '--')}\\snapshots`
+      ? `${String(model.path || '').replace(/\/+$/, '').replace(/\//g, '\\')}\\models--${repo.replace(/\//g, '--')}\\snapshots`
+      : `$env:USERPROFILE\\.cache\\huggingface\\hub\\models--${repo.replace(/\//g, '--')}\\snapshots`
     : (model.is_local_dir && model.path)
       ? `${String(model.path || '').replace(/\/+$/, '')}/${repo}`
       : (model.path)
-        ? `${String(model.path || '').replace(/\/+$/, '')}/models--${repo.replace(/\//g, '--')}/snapshots`
-        : `~/.cache/huggingface/hub/models--${repo.replace(/\//g, '--')}/snapshots`;
+      ? `${String(model.path || '').replace(/\/+$/, '')}/models--${repo.replace(/\//g, '--')}/snapshots`
+      : `~/.cache/huggingface/hub/models--${repo.replace(/\//g, '--')}/snapshots`;
 
   if (_isWindows()) {
     return searchDir;
@@ -373,7 +375,7 @@ function _rerenderCachedModels() {
     html += `</div>`;
     const _bk = _detectBackend(m).backend;
     const _bkIco = _bk === 'llamacpp' ? '<svg viewBox="0 0 24 24" width="18" height="18"><path d="M7 3C5.5 5 5 8 5 11v7c0 1.5 1 3 3 3h1v-4h6v4h1c2 0 3-1.5 3-3v-7c0-3-.5-6-2-8l-1 3c-.5-2-1.5-4-3-5-.5 2-1 3-1.5 3S11 3.5 10.5 2L7 3z" fill="currentColor"/><circle cx="9" cy="11" r="1.5" fill="var(--bg,#1a1a2e)"/><circle cx="15" cy="11" r="1.5" fill="var(--bg,#1a1a2e)"/></svg>'
-      : _bk === 'diffusers' ? '<svg viewBox="0 0 24 24" width="18" height="18"><path d="M12 2C6.5 2 2 6.5 2 12s4.5 10 10 10 10-4.5 10-10S17.5 2 12 2zm0 3c1.1 0 2 .9 2 2s-.9 2-2 2-2-.9-2-2 .9-2 2-2zM6 9c1.1 0 2 .9 2 2s-.9 2-2 2-2-.9-2-2 .9-2 2-2zm0 6c1.1 0 2 .9 2 2s-.9 2-2 2-2-.9-2-2 .9-2 2-2zm6 4c-1.1 0-2-.9-2-2 s.9-2 2-2 2 .9 2 2-.9 2-2 2zm4-8c-1.1 0-2-.9-2-2s.9-2 2-2 2 .9 2 2-.9 2-2 2z" fill="currentColor"/></svg>'
+      : _bk === 'diffusers' ? '<svg viewBox="0 0 24 24" width="18" height="18"><path d="M12 2C6.5 2 2 6.5 2 12s4.5 10 10 10 10-4.5 10-10S17.5 2 12 2zm0 3c1.1 0 2 .9 2 2s-.9 2-2 2-2-.9-2-2 .9-2 2-2zM6 9c1.1 0 2 .9 2 2s-.9 2-2 2-2-.9-2-2 .9-2 2-2zm0 6c1.1 0 2 .9 2 2s-.9 2-2 2-2-.9-2-2 .9-2 2-2zm6 4c-1.1 0-2-.9-2-2s.9-2 2-2 2 .9 2 2-.9 2-2 2zm4-8c-1.1 0-2-.9-2-2s.9-2 2-2 2 .9 2 2-.9 2-2 2z" fill="currentColor"/></svg>'
       : '<svg viewBox="0 0 24 24" width="18" height="18"><path d="M4 4l8 16 8-16h-4l-4 8-4-8z" fill="currentColor"/></svg>';
     html += `<span class="cookbook-card-backend" data-detected="${_bk}">${_bkIco}</span>`;
     html += `<div class="memory-item-actions"><button type="button" class="memory-item-btn hwfit-cached-menu-btn" title="Actions" aria-label="Model actions"><svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="5" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="12" cy="19" r="2"/></svg></button></div>`;
@@ -645,7 +647,9 @@ function _rerenderCachedModels() {
       }
       // Row 1: Backend + Server + Env
       panelHtml += `<div class="hwfit-serve-row">`;
-      const _backendChoices = _isMetal()
+      const _backendChoices = _isWindows()
+        ? [['llamacpp','llama.cpp']]
+        : _isMetal()
         // Diffusers (diffusion_server.py) is CUDA-only — omit it on Metal.
         ? [['llamacpp','llama.cpp'],['ollama','Ollama']]
         : [['vllm','vLLM'],['sglang','SGLang'],['llamacpp','llama.cpp'],['ollama','Ollama'],['diffusers','Diffusers']];
@@ -1047,6 +1051,961 @@ function _rerenderCachedModels() {
       updateBackendVisibility();
 
       async function updateRuntimeReadinessNote() {
+        const note = panel.querySelector('.hwfit-serve-runtime-note');
+        if (!note) return;
+        const backend = panel.querySelector('[data-field="backend"]')?.value || 'vllm';
+        if (!['vllm', 'sglang', 'llamacpp', 'diffusers'].includes(backend)) {
+          note.style.display = 'none';
+          note.textContent = '';
+          return;
+        }
+        const seq = (panel._runtimeReadinessSeq || 0) + 1;
+        panel._runtimeReadinessSeq = seq;
+        note.style.display = '';
+        note.textContent = 'Checking runtime on selected server...';
+        try {
+          const { pkg, target } = await _fetchServeRuntimePackage(panel, backend);
+          if (panel._runtimeReadinessSeq !== seq) return;
+          note.textContent = _runtimeNoteText(backend, pkg, target);
+          note.style.color = pkg?.installed ? 'var(--fg-muted)' : 'var(--red)';
+        } catch (err) {
+          if (panel._runtimeReadinessSeq !== seq) return;
+          note.textContent = `Runtime readiness unavailable: ${err?.message || err}`;
+          note.style.color = 'var(--fg-muted)';
+        }
+      }
+      updateRuntimeReadinessNote();
+      const runtimeServerSelect = document.getElementById('hwfit-server-select') || document.getElementById('hwfit-dl-server');
+      if (runtimeServerSelect) {
+        const refreshRuntimeOnServerChange = () => updateRuntimeReadinessNote();
+        runtimeServerSelect.addEventListener('change', refreshRuntimeOnServerChange);
+        panel._cleanupRuntimeReadiness = () => runtimeServerSelect.removeEventListener('change', refreshRuntimeOnServerChange);
+      }
+
+      // Wire save slots
+      function _loadSlotIntoPanel(slotIdx) {
+        const presets = _loadPresets();
+        const modelSlots = _presetsForModel(presets, repo);
+        const p = modelSlots[slotIdx];
+        if (!p) return;
+        const cmd = p.cmd || '';
+        // Hoisted so the GPU/venv restore below can use it in BOTH branches —
+        // it used to be scoped to the else branch, throwing a ReferenceError when
+        // a preset had saved fields (which aborted GPU + env restoration).
+        const _ex = (re) => { const m = cmd.match(re); return m ? m[1] : ''; };
+        // Prefer saved field values; fall back to regex parsing of command string
+        if (p.fields) {
+          panel.querySelectorAll('.hwfit-sf').forEach(el => {
+            const f = el.dataset.field;
+            if (f && p.fields[f] !== undefined) {
+              if (el.type === 'checkbox') el.checked = !!p.fields[f];
+              else el.value = p.fields[f];
+            }
+          });
+        } else {
+          const fields = {
+            backend: cmd.includes('llama_cpp') || cmd.includes('llama-server') ? 'llamacpp' : cmd.includes('diffusion_server') ? 'diffusers' : cmd.includes('sglang') ? 'sglang' : cmd.includes('ollama') ? 'ollama' : 'vllm',
+            port: _ex(/--port\s+(\d+)/) || '8000',
+            tp: _ex(/--tensor-parallel-size\s+(\d+)/) || '1',
+            ctx: _ex(/--max-model-len\s+(\d+)/) || _ex(/--n_ctx\s+(\d+)/) || _ex(/-c\s+(\d+)/) || '8192',
+            gpu_mem: _ex(/--gpu-memory-utilization\s+([\d.]+)/) || '0.90',
+            swap: _ex(/--swap-space\s+(\d+)/) || '',
+            dtype: _ex(/--dtype\s+(\w+)/) || 'auto',
+            vllm_kv_cache_dtype: _ex(/--kv-cache-dtype\s+([\w.-]+)/) || 'auto',
+            max_seqs: _ex(/--max-num-seqs\s+(\d+)/) || '',
+            cache_type: _ex(/(?:--cache-type-k|-ctk)\s+(\S+)/) || '',
+            llama_fit: _ex(/(?:--fit|-fit)\s+(on|off)/) || '',
+            llama_split_mode: _ex(/(?:--split-mode|-sm)\s+(none|layer|row|tensor)/) || '',
+            llama_tensor_split: _ex(/(?:--tensor-split|-ts)\s+([0-9.,]+)/) || '',
+            llama_main_gpu: _ex(/(?:--main-gpu|-mg)\s+(\d+)/) || '',
+            llama_parallel: _ex(/(?:--parallel|-np)\s+(\d+)/) || '',
+            llama_batch_size: _ex(/(?:--batch-size|-b)\s+(\d+)/) || '',
+            llama_ubatch_size: _ex(/(?:--ubatch-size|-ub)\s+(\d+)/) || '',
+            llama_spec_tokens: _ex(/--spec-draft-n-max\s+(\d+)/) || '3',
+            venv: p.envPath || '',
+          };
+          const checks = {
+            enforce_eager: cmd.includes('--enforce-eager'),
+            trust_remote: cmd.includes('--trust-remote-code'),
+            prefix_cache: cmd.includes('--enable-prefix-caching'),
+            auto_tool: cmd.includes('--enable-auto-tool-choice'),
+            flash_attn: /--flash-attn\s+on\b/.test(cmd),
+            unified_mem: /GGML_CUDA_ENABLE_UNIFIED_MEMORY=1/.test(cmd),
+            llama_no_mmap: /--no-mmap\b/.test(cmd),
+            llama_no_warmup: /--no-warmup\b/.test(cmd),
+            llama_speculative_mtp: /--spec-type\s+\S*draft-mtp/.test(cmd),
+            speculative: cmd.includes('--speculative-config'),
+          };
+          const _specMatch = cmd.match(/--speculative-config\s+'?\{[^}]*"method"\s*:\s*"([^"]+)"[^}]*"num_speculative_tokens"\s*:\s*(\d+)/);
+          if (_specMatch) {
+            fields.spec_method = _specMatch[1];
+            fields.spec_tokens = _specMatch[2];
+          }
+          panel.querySelectorAll('.hwfit-sf').forEach(el => {
+            const f = el.dataset.field;
+            if (f && fields[f] !== undefined) { el.value = fields[f]; }
+            if (f && checks[f] !== undefined && el.type === 'checkbox') { el.checked = checks[f]; }
+          });
+        }
+        // Restore the venv path from the saved config — OVERRIDE whatever's in the
+        // box (don't just fill when empty), so loading a config reliably brings its
+        // venv with it. (task-saved / older presets keep it as p.envPath.) Only
+        // skip when the preset has no venv at all, so we don't blank a typed one.
+        const _vf = panel.querySelector('[data-field="venv"]');
+        const _savedVenv = (p.fields && p.fields.venv) || p.envPath || '';
+        if (_vf && _savedVenv) _vf.value = _savedVenv;
+        // Restore the activated GPUs: saved field → command's CUDA_VISIBLE_DEVICES
+        // → the preset's top-level gpus. Reflect them on both the hidden field
+        // and the GPU buttons so the rebuilt command pins the same devices.
+        const gpuVal = (p.fields && p.fields.gpus) || _ex(/CUDA_VISIBLE_DEVICES=(\S+)/) || p.gpus || '';
+        const activeGpus = String(gpuVal).split(',').filter(Boolean);
+        panel.querySelectorAll('.cookbook-gpu-btn').forEach(btn => {
+          btn.classList.toggle('active', activeGpus.includes(btn.dataset.gpu));
+        });
+        const _gf = panel.querySelector('[data-field="gpus"]');
+        if (_gf) _gf.value = activeGpus.join(',');
+        updateBackendVisibility();
+        updateRuntimeReadinessNote();
+        updateCmd();
+        panel.querySelectorAll('.cookbook-slot-btn').forEach(b => b.classList.remove('active'));
+        panel.querySelector(`.cookbook-slot-btn[data-slot="${slotIdx}"]`)?.classList.add('active');
+      }
+
+      // Keep the arrow button's count + tooltip in sync with stored presets.
+      function _updateSavedToggleLabel() {
+        const n = _presetsForModel(_loadPresets(), repo).length;
+        const t = panel.querySelector('.cookbook-saved-arrow');
+        if (!t) return;
+        t.textContent = n > 0 ? `${n} ▾` : '▾';
+        t.title = n > 0
+          ? `${n} saved launch config${n === 1 ? '' : 's'} for ${_repoShort} — click ▾ to load or delete`
+          : `No saved launch configs for ${_repoShort} yet — click Save to add one`;
+      }
+
+      // Save the current panel fields as a new named preset (shared by the menu's
+      // "Save current config" row). Returns true if a config was actually saved.
+      async function _saveCurrentConfig() {
+        const presets = _loadPresets();
+        const modelSlots = _presetsForModel(presets, repo);
+        // Compute the current launch command first so we can detect a no-op save.
+        updateCmd();
+        const cmd = panel._cmd;
+        // Already saved? If an existing preset for this model has the identical
+        // launch command, don't make a duplicate — tell the user via a popup.
+        const _norm = s => String(s || '').replace(/\s+/g, ' ').trim();
+        const _existing = modelSlots.find(p => _norm(p.cmd) === _norm(cmd));
+        if (_existing) {
+          await window.styledConfirm(`This config is already saved as "${_existing.label || 'Unnamed'}".`, { confirmText: 'OK', cancelText: 'Close' });
+          return false;
+        }
+        if (modelSlots.length >= 5) { uiModule.showToast('Max 5 saves per model'); return false; }
+        const label = await uiModule.styledPrompt('Name this config so you can recall it later.', {
+          title: 'Save Config', placeholder: 'e.g. LoRA, 8-bit, fast', confirmText: 'Save',
+        });
+        if (!label) return false;
+        const host = panel._host || '';
+        const fields = {};
+        panel.querySelectorAll('.hwfit-sf').forEach(el => {
+          if (el.type === 'checkbox') fields[el.dataset.field] = el.checked;
+          else fields[el.dataset.field] = el.value;
+        });
+        presets.push({ name: shortName, model: repo, cmd, remoteHost: host, port: fields.port || '8000', label, fields });
+        _savePresets(presets);
+        uiModule.showToast(`Saved "${label}"`);
+        _updateSavedToggleLabel();
+        return true;
+      }
+
+      // Saved-configs dropdown. Rebuilt each open (and after delete) so it always
+      // reflects the stored presets. Standard Odysseus .dropdown look, positioned
+      // fixed at the toggle and right-aligned to it.
+      function _showSavedConfigMenu(anchor) {
+        document.querySelectorAll('.cookbook-saved-menu').forEach(d => { if (typeof d._dismiss === 'function') d._dismiss(); else d.remove(); });
+        const modelSlots = _presetsForModel(_loadPresets(), repo);
+        const dropdown = document.createElement('div');
+        dropdown.className = 'dropdown cookbook-saved-menu';
+        let closeMenu = () => { dropdown.remove(); anchor.classList.remove('cookbook-menu-active'); };
+        const rect = anchor.getBoundingClientRect();
+        const minW = 190;
+        // Cap width/height to the viewport and start hidden — we clamp the final
+        // position after mount (below) using the menu's real measured size, so it
+        // can't run off-screen on a narrow mobile viewport.
+        dropdown.style.cssText = `position:fixed;display:block;visibility:hidden;z-index:10001;top:0;left:0;right:auto;min-width:${minW}px;max-width:calc(100vw - 16px);max-height:calc(100vh - 24px);overflow-y:auto;box-sizing:border-box;background:var(--panel,var(--bg));border:1px solid var(--border);border-radius:10px;box-shadow:0 8px 24px rgba(0,0,0,0.3);padding:6px;font-size:11px;`;
+
+        if (!modelSlots.length) {
+          const empty = document.createElement('div');
+          empty.style.cssText = 'padding:6px 8px;opacity:0.5;position:relative;top:1px;';
+          empty.textContent = 'No saved configs yet';
+          dropdown.appendChild(empty);
+        }
+        modelSlots.forEach((p, idx) => {
+          const it = document.createElement('div');
+          it.className = 'dropdown-item-compact';
+          it.style.cssText = 'display:flex;align-items:center;justify-content:space-between;gap:8px;';
+          const lbl = document.createElement('span');
+          lbl.textContent = p.label || `Config ${idx + 1}`;
+          lbl.style.cssText = 'flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;';
+          const del = document.createElement('button');
+          del.type = 'button';
+          del.innerHTML = '×';
+          del.title = 'Delete';
+          del.style.cssText = 'background:none;border:none;color:var(--fg-muted);cursor:pointer;font-size:15px;line-height:1;padding:0 2px;flex-shrink:0;';
+          del.addEventListener('mouseenter', () => { del.style.color = '#f44'; });
+          del.addEventListener('mouseleave', () => { del.style.color = 'var(--fg-muted)'; });
+          it.appendChild(lbl);
+          if (p.confirmedWorking) {
+            const badge = document.createElement('span');
+            badge.className = 'cookbook-saved-confirmed';
+            badge.title = 'Confirmed working — this config launched and registered an endpoint';
+            badge.innerHTML = '<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="#50fa7b" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>';
+            it.appendChild(badge);
+          }
+          it.appendChild(del);
+          it.addEventListener('click', (e) => {
+            if (e.target === del) return;
+            e.stopPropagation();
+            // Close the menu FIRST so it always dismisses, even if loading throws.
+            closeMenu();
+            _loadSlotIntoPanel(idx);
+            // Confirm the click landed — loading is silent otherwise, so it was
+            // unclear the settings actually changed.
+            uiModule.showToast(`Loaded "${p.label || `Config ${idx + 1}`}"`);
+            // Briefly flash the command box so the user sees the panel update.
+            const _cmdBox = panel.querySelector('.hwfit-serve-cmd');
+            if (_cmdBox) {
+              _cmdBox.classList.add('cookbook-cmd-flash');
+              setTimeout(() => _cmdBox.classList.remove('cookbook-cmd-flash'), 600);
+            }
+          });
+          del.addEventListener('click', async (e) => {
+            e.stopPropagation();
+            const label = p.label || `Config ${idx + 1}`;
+            if (!await window.styledConfirm(`Delete saved config "${label}"?`, { confirmText: 'Delete', danger: true })) return;
+            const cur = _loadPresets();
+            const toRemove = _presetsForModel(cur, repo)[idx];
+            if (toRemove) {
+              const gi = cur.indexOf(toRemove);
+              if (gi >= 0) cur.splice(gi, 1);
+              _savePresets(cur);
+            }
+            uiModule.showToast(`Deleted "${label}"`);
+            _updateSavedToggleLabel();
+            _showSavedConfigMenu(anchor);   // rebuild in place
+          });
+          dropdown.appendChild(it);
+        });
+
+        document.body.appendChild(dropdown);
+        // Clamp into the viewport using the menu's real size (both axes); flip
+        // above the toggle if there isn't room below. Right-align to the anchor.
+        const w = dropdown.offsetWidth, h = dropdown.offsetHeight;
+        let left = Math.min(rect.right - w, window.innerWidth - w - 8);
+        left = Math.max(8, left);
+        let top = rect.bottom + 6;
+        if (top + h > window.innerHeight - 8) top = Math.max(8, rect.top - 6 - h);
+        dropdown.style.left = `${left}px`;
+        dropdown.style.top = `${top}px`;
+        dropdown.style.visibility = '';
+        closeMenu = bindMenuDismiss(dropdown, () => { dropdown.remove(); anchor.classList.remove('cookbook-menu-active'); }, (ev) => !dropdown.contains(ev.target) && ev.target !== anchor && !anchor.contains(ev.target));
+      }
+
+      // "Save" segment — save the current config directly.
+      const savedSaveBtn = panel.querySelector('.cookbook-saved-save');
+      if (savedSaveBtn) {
+        savedSaveBtn.addEventListener('click', async (e) => {
+          e.stopPropagation();
+          document.querySelectorAll('.cookbook-saved-menu').forEach(dismissOrRemove);
+          await _saveCurrentConfig();
+        });
+      }
+      // Arrow segment — open/close the saved-configs dropdown.
+      const savedArrowBtn = panel.querySelector('.cookbook-saved-arrow');
+      if (savedArrowBtn) {
+        savedArrowBtn.addEventListener('click', (e) => {
+          e.stopPropagation();
+          const openSaved = document.querySelector('.cookbook-saved-menu');
+          if (openSaved) {
+            if (typeof openSaved._dismiss === 'function') openSaved._dismiss();
+            else { openSaved.remove(); savedArrowBtn.classList.remove('cookbook-menu-active'); }
+            return;
+          }
+          savedArrowBtn.classList.add('cookbook-menu-active');
+          _showSavedConfigMenu(savedArrowBtn);
+        });
+      }
+
+      // Wire GPU toggle buttons
+      panel.querySelectorAll('.cookbook-gpu-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+          btn.classList.toggle('active');
+          const activeBtns = [...panel.querySelectorAll('.cookbook-gpu-btn.active')];
+          const active = activeBtns.map(b => b.dataset.gpu).join(',');
+          panel.querySelector('[data-field="gpus"]').value = active;
+          // Guard: vLLM/SGLang tensor-parallel only works across IDENTICAL GPUs.
+          // If the probe knows the per-GPU models and the selection mixes types,
+          // warn — serving across a mixed set will fail or run badly.
+          const byIdx = panel._gpuProbe && panel._gpuProbe.byIdx;
+          if (byIdx && activeBtns.length > 1) {
+            const names = new Set(activeBtns
+              .map(b => byIdx.get(parseInt(b.dataset.gpu)))
+              .filter(Boolean)
+              .map(g => g.name));
+            if (names.size > 1 && !panel._mixedGpuWarned) {
+              panel._mixedGpuWarned = true;   // once per panel, don't nag
+              uiModule.showToast('Mixed GPU types selected — tensor-parallel needs identical GPUs. Pick one pool (e.g. all the same card).', 7000);
+            } else if (names.size <= 1) {
+              panel._mixedGpuWarned = false;  // reset once they're back to one pool
+            }
+          }
+          updateCmd();
+        });
+      });
+
+      // Wire "Probe GPUs" / "Clear Server" — annotate GPU buttons with free VRAM and per-GPU PIDs
+      const _probeBtn = panel.querySelector('.cookbook-gpu-probe');
+      const _clearBtn = panel.querySelector('.cookbook-gpu-clear');
+      const _splitArrow = panel.querySelector('.cookbook-gpu-split-arrow');
+      // Split-button arrow opens a small popup with the secondary action
+      // (Probe GPUs) + a Cancel item. The popup re-uses the same probe
+      // logic by programmatically clicking the hidden .cookbook-gpu-probe.
+      if (_splitArrow) {
+        _splitArrow.addEventListener('click', (ev) => {
+          ev.stopPropagation();
+          document.querySelectorAll('.cookbook-gpu-split-menu').forEach(m => { if (typeof m._dismiss === 'function') m._dismiss(); else m.remove(); });
+          const menu = document.createElement('div');
+          menu.className = 'cookbook-task-dropdown cookbook-gpu-split-menu';
+          let closeMenu = () => menu.remove();
+          const mk = (label, cls, onClick) => {
+            const it = document.createElement('div');
+            it.className = 'dropdown-item-compact' + (cls ? ' ' + cls : '');
+            it.style.cssText = 'display:flex;align-items:center;gap:8px;';
+            it.textContent = label;
+            it.addEventListener('click', (e) => {
+              e.stopPropagation();
+              closeMenu();
+              if (onClick) onClick();
+            });
+            return it;
+          };
+          menu.appendChild(mk('Probe GPUs', '', () => _probeBtn?.click()));
+          menu.appendChild(mk('Cancel', 'dropdown-cancel-mobile', () => {}));
+          const r = _splitArrow.getBoundingClientRect();
+          menu.style.position = 'fixed';
+          menu.style.right = (window.innerWidth - r.right) + 'px';
+          document.body.appendChild(menu);
+          // Default open BELOW, but if there's no room (esp. on mobile where
+          // the arrow sits near the bottom of the modal) flip ABOVE so the
+          // popup isn't off-screen.
+          {
+            const vv = window.visualViewport;
+            const viewTop = vv ? vv.offsetTop : 0;
+            const viewBottom = vv ? vv.offsetTop + vv.height : window.innerHeight;
+            const mh = menu.offsetHeight;
+            const m = 8;
+            let top = r.bottom + 4;
+            if (top + mh > viewBottom - m) {
+              const above = r.top - 4 - mh;
+              top = above >= viewTop + m ? above : Math.max(viewTop + m, viewBottom - mh - m);
+            }
+            menu.style.top = top + 'px';
+          }
+          // Close on outside click or Escape (via the registry); also dismiss
+          // on scroll since the popup is fixed-positioned to the arrow.
+          const _scrollClose = () => closeMenu();
+          closeMenu = bindMenuDismiss(menu, () => { menu.remove(); window.removeEventListener('scroll', _scrollClose, true); }, (e) => !menu.contains(e.target) && e.target !== _splitArrow);
+          window.addEventListener('scroll', _scrollClose, true);
+        });
+      }
+      const _withSpinner = async (btn, fn) => {
+        const origHtml = btn.innerHTML;
+        btn.disabled = true;
+        const wp = spinnerModule.createWhirlpool(14);
+        wp.element.style.cssText = 'display:inline-block;vertical-align:middle;position:relative;top:-1px;margin:0 4px 0 0;width:14px;height:14px;';
+        btn.innerHTML = '';
+        btn.appendChild(wp.element);
+        const lbl = document.createElement('span');
+        lbl.textContent = origHtml.replace(/<[^>]*>/g, '').trim() || '…';
+        lbl.style.cssText = 'vertical-align:middle;';
+        btn.appendChild(lbl);
+        try { return await fn(); }
+        finally {
+          wp.destroy();
+          btn.innerHTML = origHtml;
+          btn.disabled = false;
+        }
+      };
+      if (_probeBtn) {
+        // Per-panel state so a previously opened popup can be closed/reused
+        panel._gpuProbe = panel._gpuProbe || { popup: null, byIdx: null };
+
+        const _closeProbePopup = () => {
+          if (panel._gpuProbe.popup) {
+            panel._gpuProbe.popup.remove();
+            panel._gpuProbe.popup = null;
+          }
+        };
+
+        const _doKill = async (pid, sig, hostVal) => {
+          const res = await fetch('/api/cookbook/kill-pid', {
+            method: 'POST', credentials: 'same-origin',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ pid, signal: sig, host: hostVal || null }),
+          });
+          let data;
+          try { data = await res.json(); } catch (_) { data = {}; }
+          if (!res.ok || !data.ok) {
+            const err = data.error || data.detail || res.statusText || 'unknown';
+            uiModule.showToast(`Kill PID ${pid} failed: ${err}`, 6000);
+            return false;
+          }
+          uiModule.showToast(`Sent SIG${sig} to PID ${pid}`, 3000);
+          return true;
+        };
+
+        const _openProbePopup = (anchorBtn, gpu, hostVal) => {
+          _closeProbePopup();
+          const popup = document.createElement('div');
+          popup.className = 'cookbook-gpu-popup';
+          const procs = gpu.processes || [];
+          const procHtml = procs.length === 0
+            ? '<div class="cookbook-gpu-popup-empty">No GPU processes reported. VRAM may be held by a zombie or another tenant.</div>'
+            : procs.map(p =>
+                `<div class="cookbook-gpu-proc" data-pid="${p.pid}">
+                   <span class="cookbook-gpu-proc-info">
+                     <span class="cookbook-gpu-proc-pid">${p.pid}</span>
+                     <span class="cookbook-gpu-proc-name" title="${esc(p.name)}">${esc(p.name)}</span>
+                     <span class="cookbook-gpu-proc-mem">${(p.used_mb/1024).toFixed(1)}G</span>
+                   </span>
+                   <span class="cookbook-gpu-proc-actions">
+                     <button type="button" class="cookbook-gpu-kill" data-sig="TERM" title="Graceful (SIGTERM)">Kill</button>
+                     <button type="button" class="cookbook-gpu-kill" data-sig="KILL" title="Force (SIGKILL)">!</button>
+                   </span>
+                 </div>`
+              ).join('');
+          popup.innerHTML = `
+            <div class="cookbook-gpu-popup-head">
+              GPU ${gpu.index} · ${esc(gpu.name)}
+              <span class="cookbook-gpu-popup-stats">${(gpu.free_mb/1024).toFixed(1)} / ${(gpu.total_mb/1024).toFixed(1)} GB free · util ${gpu.util_pct}%</span>
+              <button type="button" class="cookbook-gpu-popup-close" title="Close">×</button>
+            </div>
+            <div class="cookbook-gpu-popup-body">${procHtml}</div>`;
+          document.body.appendChild(popup);
+          panel._gpuProbe.popup = popup;
+
+          // Position below the button using viewport coords (popup is
+          // position:fixed). Measure the popup AFTER it's in the DOM so
+          // we get the real rendered size, then clamp both axes so the
+          // popup stays fully visible — GPU buttons near the right edge
+          // of the modal previously anchored the popup mostly off-screen.
+          const r = anchorBtn.getBoundingClientRect();
+          const vw = window.innerWidth  || document.documentElement.clientWidth;
+          const vh = window.innerHeight || document.documentElement.clientHeight;
+          const pw = popup.offsetWidth  || 320;
+          const ph = popup.offsetHeight || 200;
+          let left = r.left;
+          let top  = r.bottom + 4;
+          // Push left so the popup doesn't overflow the right edge.
+          if (left + pw > vw - 8) left = Math.max(8, vw - pw - 8);
+          // If there isn't room below, render above the button instead.
+          if (top + ph > vh - 8) top = Math.max(8, r.top - ph - 4);
+          popup.style.left = `${left}px`;
+          popup.style.top  = `${top}px`;
+
+          popup.querySelector('.cookbook-gpu-popup-close')?.addEventListener('click', _closeProbePopup);
+          popup.querySelectorAll('.cookbook-gpu-kill').forEach(btn => {
+            btn.addEventListener('click', async (ev) => {
+              ev.stopPropagation();
+              const row = btn.closest('.cookbook-gpu-proc');
+              const pid = parseInt(row.dataset.pid);
+              const sig = btn.dataset.sig;
+              if (sig === 'KILL' && !await window.styledConfirm(`SIGKILL PID ${pid}? This force-terminates without cleanup.`, { confirmText: 'SIGKILL', danger: true })) return;
+              btn.disabled = true;
+              btn.textContent = '…';
+              const ok = await _doKill(pid, sig, hostVal);
+              if (ok) {
+                row.style.opacity = '0.4';
+                row.style.textDecoration = 'line-through';
+                // Re-probe after a short delay so freed VRAM updates
+                setTimeout(() => _probeBtn.click(), 1200);
+              } else {
+                btn.disabled = false;
+                btn.textContent = sig === 'KILL' ? '!' : 'Kill';
+              }
+            });
+          });
+
+          // Click outside closes the popup
+          setTimeout(() => {
+            const outside = (ev) => {
+              if (!popup.contains(ev.target) && ev.target !== anchorBtn) {
+                _closeProbePopup();
+                document.removeEventListener('mousedown', outside, true);
+              }
+            };
+            document.addEventListener('mousedown', outside, true);
+          }, 0);
+        };
+
+        const _runProbe = async (silent = false) => {
+          _closeProbePopup();
+          const hostEl = panel.querySelector('[data-field="host"]');
+          const remoteHost = (hostEl && hostEl.value || '').trim();
+          const params = new URLSearchParams();
+          if (remoteHost) params.set('host', remoteHost);
+          const url = '/api/cookbook/gpus' + (params.toString() ? '?' + params.toString() : '');
+          const res = await fetch(url, { credentials: 'same-origin' });
+          let data;
+          try { data = await res.json(); } catch (_) { data = {}; }
+          if (!res.ok) {
+            const err = data.detail || data.error || res.statusText || `HTTP ${res.status}`;
+            const hint = res.status === 404 ? ' — server may need a restart to pick up new endpoint' : '';
+            if (!silent) uiModule.showToast('GPU probe failed: ' + err + hint, 8000);
+            return null;
+          }
+          if (!data.ok) {
+            if (!silent) uiModule.showToast('GPU probe failed: ' + (data.error || 'unknown'), 6000);
+            return null;
+          }
+          panel._gpuProbe.byIdx = new Map(data.gpus.map(g => [g.index, g]));
+          panel._gpuProbe.host = remoteHost;
+          panel.querySelectorAll('.cookbook-gpu-btn').forEach(b => {
+            const idx = parseInt(b.dataset.gpu);
+            const g = panel._gpuProbe.byIdx.get(idx);
+            b.classList.remove('gpu-free', 'gpu-busy', 'gpu-missing');
+            if (!g) {
+              // GPU doesn't exist on this server — hide it rather than show a
+              // dead button. The panel renders up to 8 before the count is known
+              // (e.g. a single-GPU box would otherwise show 0–7).
+              b.style.display = 'none';
+              b.classList.remove('active');
+              return;
+            }
+            b.style.display = '';
+            const freeGb = (g.free_mb / 1024).toFixed(1);
+            const totalGb = (g.total_mb / 1024).toFixed(1);
+            const procCount = (g.processes && g.processes.length) || 0;
+            const procLine = procCount
+              ? `\n${procCount} process(es) — click to view/kill`
+              : '';
+            const backendLine = g.backend || data.backend ? `\nprobe: ${g.source || data.source || g.backend || data.backend}` : '';
+            b.title = `GPU ${idx} ${g.name}\n${freeGb} / ${totalGb} GB free · util ${g.util_pct}%${procLine}${backendLine}`;
+            // Treat any GPU with attached compute processes OR <85% free as busy.
+            const isBusy = procCount > 0 || g.busy;
+            b.classList.add(isBusy ? 'gpu-busy' : 'gpu-free');
+          });
+          if (!silent) {
+            if (data.gpus.length === 0) {
+              uiModule.showToast('No GPU memory probe data available', 4000);
+            } else {
+              const summary = data.gpus.map(g => {
+                const procs = (g.processes && g.processes.length) || 0;
+                return `GPU${g.index}: ${(g.free_mb/1024).toFixed(1)}G free` + (procs ? ` (${procs}p)` : '');
+              }).join(' · ');
+              uiModule.showToast(summary + ' · dbl-click a GPU button to view/kill processes', 7000);
+            }
+          }
+          return data;
+        };
+
+        _probeBtn.addEventListener('click', async () => {
+          try { await _withSpinner(_probeBtn, () => _runProbe(false)); }
+          catch (e) { uiModule.showToast('GPU probe error: ' + e.message, 6000); }
+        });
+
+        // Auto-probe (silent) on open so the GPU buttons reflect the real count
+        // — a single-GPU server should show just GPU 0, not the placeholder 0–7.
+        // Falls back to the full 0–7 set if the server is unreachable.
+        _runProbe(true).catch(() => {});
+
+        if (_clearBtn) {
+          _clearBtn.addEventListener('click', async () => {
+            try {
+              await _withSpinner(_clearBtn, async () => {
+                // Always probe first so we have fresh PID list
+                const data = await _runProbe();
+                if (!data) return;
+                const pids = [];
+                for (const g of data.gpus) {
+                  for (const p of (g.processes || [])) pids.push({ pid: p.pid, name: p.name });
+                }
+                if (pids.length === 0) {
+                  uiModule.showToast('No GPU processes to clear', 3000);
+                  return;
+                }
+                const summary = pids.map(p => `${p.pid} (${p.name})`).join(', ');
+                if (!await window.styledConfirm(`Clear server GPU memory by sending SIGTERM to ${pids.length} process(es)?\n\n${summary}\n\nIf any survive, the next prompt can force-kill them with SIGKILL.`, { confirmText: 'SIGTERM', danger: true })) return;
+                // First pass: SIGTERM
+                const hostVal = panel._gpuProbe.host;
+                const results = await Promise.all(pids.map(p =>
+                  fetch('/api/cookbook/kill-pid', {
+                    method: 'POST', credentials: 'same-origin',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ pid: p.pid, signal: 'TERM', host: hostVal || null }),
+                  }).then(r => r.json()).catch(e => ({ ok: false, error: e.message }))
+                ));
+                const okCount = results.filter(r => r.ok).length;
+                uiModule.showToast(`SIGTERM → ${okCount}/${pids.length} processes`, 5000);
+                // Wait, then re-probe; if survivors, offer SIGKILL
+                await new Promise(r => setTimeout(r, 1500));
+                const after = await _runProbe();
+                if (!after) return;
+                const survivors = [];
+                for (const g of after.gpus) {
+                  for (const p of (g.processes || [])) {
+                    if (pids.some(orig => orig.pid === p.pid)) survivors.push(p);
+                  }
+                }
+                if (survivors.length === 0) {
+                  uiModule.showToast(`Cleared ${pids.length} GPU process(es)`, 4000);
+                  return;
+                }
+                if (!await window.styledConfirm(`${survivors.length} process(es) survived SIGTERM:\n\n${survivors.map(p => p.pid + ' (' + p.name + ')').join(', ')}\n\nForce-kill with SIGKILL?`, { confirmText: 'SIGKILL', danger: true })) return;
+                const killResults = await Promise.all(survivors.map(p =>
+                  fetch('/api/cookbook/kill-pid', {
+                    method: 'POST', credentials: 'same-origin',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ pid: p.pid, signal: 'KILL', host: hostVal || null }),
+                  }).then(r => r.json()).catch(e => ({ ok: false, error: e.message }))
+                ));
+                const killOk = killResults.filter(r => r.ok).length;
+                uiModule.showToast(`SIGKILL → ${killOk}/${survivors.length} processes`, 5000);
+                await new Promise(r => setTimeout(r, 800));
+                await _runProbe();
+              });
+            } catch (e) {
+              uiModule.showToast('Clear Server error: ' + e.message, 6000);
+            }
+          });
+        }
+
+        // After probe, clicking a GPU button opens kill popup (Shift-click also toggles select)
+        panel.querySelectorAll('.cookbook-gpu-btn').forEach(btn => {
+          btn.addEventListener('contextmenu', (ev) => {
+            if (!panel._gpuProbe.byIdx) return;
+            const g = panel._gpuProbe.byIdx.get(parseInt(btn.dataset.gpu));
+            if (!g) return;
+            ev.preventDefault();
+            _openProbePopup(btn, g, panel._gpuProbe.host);
+          });
+          btn.addEventListener('dblclick', (ev) => {
+            if (!panel._gpuProbe.byIdx) return;
+            const g = panel._gpuProbe.byIdx.get(parseInt(btn.dataset.gpu));
+            if (!g) return;
+            ev.preventDefault();
+            _openProbePopup(btn, g, panel._gpuProbe.host);
+          });
+        });
+      }
+
+      // Update preview on input change
+      panel.querySelectorAll('.hwfit-sf').forEach(el => {
+        el.addEventListener('input', updateCmd);
+        el.addEventListener('change', (e) => {
+          if (e.target.dataset.field === 'backend') {
+            const extraEl = panel.querySelector('[data-field="extra"]');
+            if (extraEl) extraEl.value = '';
+            updateBackendVisibility();
+            updateRuntimeReadinessNote();
+          }
+          if (e.target.dataset.field === 'venv') {
+            updateRuntimeReadinessNote();
+          }
+          updateCmd();
+        });
+      });
+      // Themed +/- buttons next to spec_tokens — step the adjacent number input.
+      panel.querySelectorAll('.hwfit-numstep-btn').forEach(btn => {
+        btn.addEventListener('click', (e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          const input = btn.parentElement?.querySelector('input[type="number"]');
+          if (!input) return;
+          const step = parseInt(btn.dataset.step, 10) || 0;
+          const min = input.min !== '' ? Number(input.min) : -Infinity;
+          const max = input.max !== '' ? Number(input.max) : Infinity;
+          const next = Math.min(max, Math.max(min, (Number(input.value) || 0) + step));
+          input.value = String(next);
+          input.dispatchEvent(new Event('input', { bubbles: true }));
+          input.dispatchEvent(new Event('change', { bubbles: true }));
+        });
+      });
+
+      // Track manual edits
+      let _cmdManuallyEdited = false;
+      const _cmdTextarea = panel.querySelector('.hwfit-serve-cmd');
+      if (_cmdTextarea) _cmdTextarea.addEventListener('input', () => { _cmdManuallyEdited = true; });
+
+      // Cancel button — collapses the serve config panel (same effect as
+      // tapping the row to toggle it shut). Mobile users wanted an explicit
+      // "back out" affordance next to Launch.
+      panel.querySelector('.hwfit-serve-cancel')?.addEventListener('click', (ev) => {
+        ev.stopPropagation();
+        panel._cleanupRuntimeReadiness?.();
+        panel.remove();
+        item.classList.remove('doclib-card-expanded');
+        item.style.flexDirection = '';
+        item.style.alignItems = '';
+        if (list) { list.style.minHeight = ''; list.style.maxHeight = ''; }
+      });
+
+      // Launch button
+      panel.querySelector('.hwfit-serve-launch').addEventListener('click', async (ev) => {
+        const _launchBtn = ev.currentTarget;
+        // Immediate visual feedback. The GPU probe + backend-warning prompt
+        // below can take ~1-2s before the task UI shows up, leaving the
+        // button looking dead. Drop in the same whirlpool spinner the rest of
+        // the cookbook uses (Probe GPUs, dependency installs, etc.) right
+        // away; restored on any early-return / failure path below.
+        const _origBtnHtml = _launchBtn.innerHTML;
+        const _origBtnDisabled = _launchBtn.disabled;
+        let _launchingWp = null;
+        const _restoreLaunchBtn = () => {
+          try { _launchingWp?.destroy?.(); } catch {}
+          _launchingWp = null;
+          _launchBtn.innerHTML = _origBtnHtml;
+          _launchBtn.disabled = _origBtnDisabled;
+        };
+        _launchBtn.disabled = true;
+        _launchBtn.innerHTML = '';
+        const _launchingWrap = document.createElement('span');
+        _launchingWrap.className = 'hwfit-serve-launching';
+        _launchingWrap.style.cssText = 'display:inline-flex;align-items:center;gap:6px;';
+        _launchingWp = spinnerModule.createWhirlpool(18);
+        if (_launchingWp?.element) {
+          _launchingWp.element.style.margin = '0';
+          _launchingWp.element.style.transform = 'translateY(-2px)';
+          _launchingWrap.appendChild(_launchingWp.element);
+        }
+        const _launchingLabel = document.createElement('span');
+        _launchingLabel.textContent = 'Launching…';
+        _launchingWrap.appendChild(_launchingLabel);
+        _launchBtn.appendChild(_launchingWrap);
+        // Final safety net: never launch with ctx beyond the model's trained
+        // limit (or the absolute sanity ceiling when the limit is unknown). A
+        // stale preset or typo (e.g. 16000000) overflows and, with a quantized
+        // KV cache, can crash the GPU. Skip only if the user hand-edited the raw
+        // command (then we respect their literal text).
+        if (!_cmdManuallyEdited) _clampCtx(true);
+        if (!_cmdManuallyEdited) updateCmd();
+        // Pasted commands often carry hidden newlines / CRs / tabs from copies
+        // out of model cards or wrapped help text. The backend cmd allowlist
+        // rejects \n / \r outright (`Invalid characters in cmd`), so collapse
+        // all whitespace to single spaces before launch — same effect as the
+        // user manually re-flowing the textarea, no behavior change.
+        const _rawLaunchCmd = _cmdTextarea ? _cmdTextarea.value : panel._cmd;
+        const launchCmd = String(_rawLaunchCmd || '').replace(/\s+/g, ' ').trim();
+        if (_cmdTextarea && _cmdTextarea.value !== launchCmd) _cmdTextarea.value = launchCmd;
+        const serveState = {};
+        panel.querySelectorAll('.hwfit-sf').forEach(el => {
+          if (el.type === 'checkbox') serveState[el.dataset.field] = el.checked;
+          else serveState[el.dataset.field] = el.value;
+        });
+        serveState.backend = serveState.backend || (_detectBackend(m).backend) || 'vllm';
+        const backendWarning = _serveBackendWarning(m, repo, serveState.backend, serveState);
+        if (backendWarning) {
+          _restoreLaunchBtn();
+          await window.styledConfirm(backendWarning.body, {
+            title: backendWarning.title,
+            confirmText: 'Edit settings',
+            cancelText: 'Close',
+          });
+          return;
+        }
+        // Pre-launch GPU probe — common failure pattern: vLLM/SGLang launched
+        // on a host where no GPU is visible (driver missing, $CUDA_VISIBLE_DEVICES
+        // unset, container without --gpus). Catch it BEFORE the user spends
+        // minutes watching the task fail.
+        const _needsGpu = ['vllm', 'sglang'].includes(serveState.backend)
+          || (serveState.backend === 'diffusers');
+        if (_needsGpu) {
+          try {
+            const _probeHost = (_envState.remoteHost || '').trim();
+            const _probeParams = new URLSearchParams();
+            if (_probeHost) {
+              _probeParams.set('host', _probeHost);
+              const _sp = (_envState.servers || []).find(s => s.host === _probeHost)?.port;
+              if (_sp) _probeParams.set('ssh_port', _sp);
+            }
+            const _probeRes = await fetch('/api/cookbook/gpus' + (_probeParams.toString() ? '?' + _probeParams : ''), { credentials: 'same-origin' });
+            const _probeData = await _probeRes.json();
+            const _probeGpus = Array.isArray(_probeData) ? _probeData : (_probeData.gpus || []);
+            if (!_probeGpus.length) {
+              const _proceed = await window.styledConfirm(
+                `No GPU detected on ${_probeHost ? _probeHost : 'this host'}. ${serveState.backend.toUpperCase()} needs a visible CUDA/ROCm accelerator to start — launching now will most likely crash early.\n\nLaunch anyway?`,
+                { title: 'No GPU detected', confirmText: 'Launch anyway', cancelText: 'Cancel', danger: true },
+              );
+              if (!_proceed) { _restoreLaunchBtn(); return; }
+            }
+          } catch {
+            // Network / probe failure — don't block. Better to let the launch
+            // proceed than to silently refuse because the probe endpoint
+            // hiccuped (the user can read the real error in the task output).
+          }
+        }
+
+        // Pre-launch PORT probe — second most common failure pattern is
+        // collision with an already-running server (vllm crashing with
+        // "Address already in use" because Ollama owns 11434, or a
+        // previous vllm on the same port wasn't killed). The post-mortem
+        // "Suggested action: Kill existing vLLM" came AFTER the failed
+        // launch — user wants to know BEFORE clicking Launch. Parse the
+        // port out of the cmd, ssh-check who owns it on the target host,
+        // and offer to abort or proceed.
+        try {
+          const _portMatch = launchCmd.match(/(?:^|\s)(?:--port|-p|--host\s+\S+\s+--port)\s+(\d{2,5})\b/)
+            || launchCmd.match(/(?:^|\s)--port=(\d{2,5})\b/)
+            || launchCmd.match(/OLLAMA_HOST=[^:\s]+:(\d{2,5})\b/);
+          const _port = _portMatch ? _portMatch[1] : '';
+          if (_port) {
+            const _portHost = (_envState.remoteHost || '').trim();
+            const _checkInner = `ss -tlnp 2>/dev/null | awk '$4 ~ /:${_port}$/ {print; exit}' || netstat -tlnp 2>/dev/null | awk '$4 ~ /:${_port}$/ {print; exit}'`;
+            const _cmd = _portHost
+              ? `ss h ${_portHost} <<<"" 2>/dev/null; ssh -o ConnectTimeout=4 -o StrictHostKeyChecking=no ${_portHost} ${JSON.stringify(_checkInner)}`
+              : _checkInner;
+            const _res = await fetch('/api/shell/exec', {
+              method: 'POST', credentials: 'same-origin',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ command: _cmd }),
+            });
+            const _data = await _res.json().catch(() => ({}));
+            const _stdout = (_data.stdout || '').trim();
+            if (_stdout) {
+              // Try to surface the process name from `users:(("name",pid=...,...))`.
+              const _procMatch = _stdout.match(/users:\(\("([^"]+)",pid=(\d+)/);
+              const _procDesc = _procMatch
+                ? `${_procMatch[1]} (PID ${_procMatch[2]})`
+                : 'another process';
+              const _hostLabel = _portHost ? _portHost : 'this host';
+              const _proceed = await window.styledConfirm(
+                `Port ${_port} on ${_hostLabel} is already in use by ${_procDesc}. Launching ${serveState.backend.toUpperCase()} now will fail with "Address already in use".\n\nStop the existing process first, OR change the --port in the command above, OR launch anyway and watch it crash.`,
+                {
+                  title: `Port ${_port} taken`,
+                  confirmText: 'Launch anyway',
+                  cancelText: 'Cancel',
+                  danger: true,
+                },
+              );
+              if (!_proceed) { _restoreLaunchBtn(); return; }
+            }
+          }
+        } catch {
+          // Probe failure — don't block. If the port check can't run we'd
+          // rather let the launch try than silently refuse.
+        }
+        // Save in the { _byRepo, _lastUsed } schema — no legacy flat keys at
+        // the root so per-model state doesn't leak between models.
+        try {
+          let cur = {};
+          try { cur = JSON.parse(localStorage.getItem(SERVE_STATE_KEY)) || {}; } catch {}
+          const byRepo = (cur && cur._byRepo && typeof cur._byRepo === 'object') ? cur._byRepo : {};
+          byRepo[repo] = serveState;
+          localStorage.setItem(SERVE_STATE_KEY, JSON.stringify({ _byRepo: byRepo, _lastUsed: serveState }));
+        } catch {}
+        const origEnv = _envState.env;
+        const origEnvPath = _envState.envPath;
+        const venvVal = panel.querySelector('[data-field="venv"]')?.value?.trim();
+        const gpusVal = panel.querySelector('[data-field="gpus"]')?.value?.trim();
+        const origGpus = _envState.gpus;
+        // Resolve the target host from the visible Server dropdown — the reliable
+        // source. Relying on _envState.remoteHost silently sent serves to Local
+        // when that value was stale/empty. Pass it explicitly to the launcher.
+        let serveHost = _envState.remoteHost || '';
+        let _srvEnv = '', _srvEnvPath = '';
+        const _ssEl = document.getElementById('hwfit-server-select') || document.getElementById('hwfit-dl-server');
+        if (_ssEl && _ssEl.value != null) {
+          if (_ssEl.value === 'local') serveHost = '';
+          else {
+            // Values are host strings now; resolve by host (numeric fallback).
+            const _srv = _envState.servers.find(s => s.host === _ssEl.value) || _envState.servers[parseInt(_ssEl.value)];
+            if (_srv) {
+              serveHost = _srv.host;
+              _srvEnv = _srv.env || '';
+              _srvEnvPath = _srv.envPath || '';
+            }
+          }
+        }
+        // The venv field wins; otherwise fall back to the env configured for the
+        // selected server in Settings, so the activation isn't silently dropped
+        // when the field is left blank (the per-server venv wasn't being applied).
+        if (venvVal) { _envState.env = 'venv'; _envState.envPath = venvVal; }
+        else if (_srvEnvPath) { _envState.env = (_srvEnv === 'conda' ? 'conda' : 'venv'); _envState.envPath = _srvEnvPath; }
+        if (gpusVal) _envState.gpus = gpusVal;
+        try {
+          await _withSpinner(_launchBtn, async () => {
+            // Pass the exact form values so the running task can be re-opened
+            // in the Serve panel pre-filled with these settings (Edit button).
+            await _launchServeTask(shortName, repo, launchCmd, serveState, serveHost);
+          });
+        } finally {
+          _envState.env = origEnv;
+          _envState.envPath = origEnvPath;
+          _envState.gpus = origGpus;
+        }
+      });
+
+      // Copy button — now icon-only, so flash a green checkmark on success
+      // instead of swapping to text (which would also break the width).
+      panel.querySelector('.hwfit-serve-copy').addEventListener('click', (e) => {
+        // Without stopPropagation the click bubbles up to the
+        // .doclib-card click handler that toggles the expand state →
+        // copying collapses the whole serve panel mid-flight.
+        e.preventDefault();
+        e.stopPropagation();
+        const cmd = panel.querySelector('.hwfit-serve-cmd').value;
+        _copyText(cmd).then(() => {
+          const btn = panel.querySelector('.hwfit-serve-copy');
+          const origHtml = btn.innerHTML;
+          btn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>';
+          btn.classList.add('copied');
+          setTimeout(() => { btn.innerHTML = origHtml; btn.classList.remove('copied'); }, 1500);
+        });
+      });
+    });
+  });
+}
+
+// ── Delete / retry cached model ──
+
+// Resolve the host the cached list was scanned from, mirroring
+// _fetchCachedModels — so a delete targets the SAME machine the model
+// actually lives on, not just the globally-selected serve host.
+function _resolveCacheHost() {
+  let host = _envState.remoteHost || '';
+  const cacheSrv = document.getElementById('hwfit-cache-server');
+  if (cacheSrv) {
+    const val = cacheSrv.value;
+    if (val === 'local') host = '';
+    else { const s = _envState.servers.find(x => x.host === val) || _envState.servers[parseInt(val)]; if (s) host = s.host; }
+  }
+  return host;
+}
+
+async function _deleteCachedModel(repo, itemEl, skipConfirm = false, model = null) {
+  if (!skipConfirm && !(await uiModule.styledConfirm(`Delete ${repo} from cache?`, { confirmText: 'Delete', danger: true }))) return;
+  const m = model || _cachedAllModels.find(x => x.repo_id === repo);
+  // Delete the EXACT on-disk path the scan reported. Models in a custom
+  // model dir live at <path>/<repo>; HF-cache models at
+  // <path>/models--<org>--<name>. The old code always rm'd the hardcoded
+  // ~/.cache/huggingface/hub path, so models in a custom dir were never
+  // removed and reappeared on the next scan. m.path is already absolute
+  // (os.path.expanduser ran on the host); only the bare fallback uses ~.
+  let target;
+  if (m && m.is_local_dir && m.path) {
+    target = `${m.path}/${repo}`;
+  } else if (m && m.path) {
+    target = `${m.path}/models--${repo.replace(/\//g, '--')}`;
+  } else {
+    target = `~/.cache/huggingface/hub/models--${repo.replace(/\//g, '--')}`;
+  }
+  const host = _resolveCacheHost();
+  let cmd;
+  if (_isWindows()) {
+    const winTarget = target.startsWith('~')
+      ? target.replace(/^~/, '$env:USERPROFILE').replace(/\//g, '\\')
+      : target.replace(/\//g, '\\');
+    cmd = `Remove-Item -Recurse -Force "${winTarget}" -ErrorAction SilentlyContinue`;
+    if (host) {
+      const pf = _sshPrefix(_getPort(host));
       cmd = `ssh ${pf}${host} "powershell -Command \\"${cmd}\\""`;
     }
   } else {
@@ -1113,7 +2072,7 @@ function _retryCachedModel(repo, m) {
   const payload = { repo_id: repo };
   if (_envState.hfToken) payload.hf_token = _envState.hfToken;
   if (_envState.remoteHost) { payload.remote_host = _envState.remoteHost; const _sp2 = _getPort(_envState.remoteHost); if (_sp2) payload.ssh_port = _sp2; }
-  if (_envState.remoteHost && _envState.platform) payload.platform = _envState.platform;
+  if (_envState.platform) payload.platform = _envState.platform;
   if (_isWindows()) {
     if (_envState.env === 'venv' && _envState.envPath) {
       payload.env_prefix = '& ' + _psQuote(_envState.envPath.endsWith('\\Scripts\\Activate.ps1') ? _envState.envPath : _envState.envPath + '\\Scripts\\Activate.ps1');
@@ -1331,14 +2290,9 @@ export async function _fetchCachedModels() {
 /** Filter presets matching a model repo */
 function _presetsForModel(presets, repo) {
   const short = repo.split('/').pop();
-  const exact = presets.filter(p => {
-    const pm = p.model || '';
-    return pm === repo;
-  });
-  if (exact.length) return exact;
   return presets.filter(p => {
     const pm = p.model || ''; const pn = p.name || '';
-    return pn === repo || pm.split('/').pop() === short || pn === short;
+    return pm === repo || pn === repo || pm.split('/').pop() === short || pn === short;
   });
 }
 
